@@ -36,6 +36,11 @@ Coauthored by AI - Codex GPT 5.4
 - Prefer readable C formatting over tightly packed expressions; a little extra whitespace is better than hard-to-scan code.
 - When practical, prefer fail-first control flow so error handling happens early and the main path stays easy to read.
 
+## Markdown Links
+
+- Inside repository Markdown files, use relative links instead of absolute local filesystem paths.
+- Absolute paths are fine in Codex responses when referencing local files for the user, but they should not be committed into project documentation.
+
 ## Safety Expectations
 
 - Be careful with filesystem semantics: changes should be checked against expected POSIX/FUSE behavior.
