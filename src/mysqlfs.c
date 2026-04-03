@@ -199,30 +199,32 @@ static int mysqlfs_unlink(const char *path)
     log_printf(LOG_D_CALL, "mysqlfs_unlink(\"%s\")\n", path);
 
     if ((dbconn = pool_get()) == NULL)
-      return -EMFILE;
+        return -EMFILE;
 
     ret = query_inode_full(dbconn, path, name, sizeof(name),
-			   &inode, &parent, &nlinks);
+                           &inode, &parent, &nlinks);
     if (ret < 0) {
         if (ret != -ENOENT)
             log_printf(LOG_ERROR, "Error: query_inode_full(%s): %s\n",
-		       path, strerror(ret));
-	goto err_out;
+                       path, strerror(ret));
+        goto err_out;
     }
 
     ret = query_rmdirentry(dbconn, name, parent);
     if (ret < 0) {
         log_printf(LOG_ERROR, "Error: query_rmdirentry()\n");
-	goto err_out;
+        goto err_out;
     }
 
-    /* Only the last unlink() must set deleted flag. 
+    /* Only the last unlink() must set deleted flag.
      * This is a shortcut - query_set_deleted() wouldn't
      * set the flag if there is still an existing direntry
      * anyway. But we'll save some DB processing here. */
-    if (nlinks > 1)
-        return 0;
-    
+    if (nlinks > 1) {
+        ret = 0;
+        goto out;
+    }
+
     /* Due to the introduction of InnoDB referencial integrity
      * (and cascading), this should be totaly useless,
      * But let's keep it here for a while. */
@@ -231,20 +233,22 @@ static int mysqlfs_unlink(const char *path)
     ret = query_set_deleted(dbconn, inode);
     if (ret < 0) {
         log_printf(LOG_ERROR, "Error: query_set_deleted()\n");
-	goto err_out;
+        goto err_out;
     }
 
     ret = query_purge_deleted(dbconn, inode);
     if (ret < 0) {
         log_printf(LOG_ERROR, "Error: query_purge_deleted()\n");
-	goto err_out;
+        goto err_out;
     }
 
     /* ...Useless_End */
 
-    pool_put(dbconn);
+    ret = 0;
 
-    return 0;
+out:
+    pool_put(dbconn);
+    return ret;
 
 err_out:
     pool_put(dbconn);
