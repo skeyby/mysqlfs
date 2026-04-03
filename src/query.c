@@ -193,6 +193,7 @@ int query_inode_full(MYSQL *mysql, const char *path, char *name, size_t name_len
 		      long *inode, long *parent, long *nlinks)
 {
     long ret;
+    int written;
     char sql[SQL_MAX];
     MYSQL_RES* result;
     MYSQL_ROW row;
@@ -204,39 +205,69 @@ int query_inode_full(MYSQL *mysql, const char *path, char *name, size_t name_len
     char *sql_from_end = sql_from, *sql_where_end = sql_where;
     char esc_name[PATH_MAX * 2];
 
-    // TODO: Handle too long or too nested paths that don't fit in SQL_MAX!!!
-    sql_from_end += snprintf(sql_from_end, SQL_MAX, "%s AS t0", tables->tree);
-    sql_where_end += snprintf(sql_where_end, SQL_MAX, "t0.parent IS NULL");
+    written = snprintf(sql_from_end, sizeof(sql_from), "%s AS t0", tables->tree);
+    if (written < 0 || (size_t)written >= sizeof(sql_from)) {
+        free(pathptr_saved);
+        return -ENAMETOOLONG;
+    }
+    sql_from_end += written;
+
+    written = snprintf(sql_where_end, sizeof(sql_where), "t0.parent IS NULL");
+    if (written < 0 || (size_t)written >= sizeof(sql_where)) {
+        free(pathptr_saved);
+        return -ENAMETOOLONG;
+    }
+    sql_where_end += written;
+
     while ((nameptr = strtok_r(pathptr, "/", &saveptr)) != NULL) {
         if (depth++ == 0) {
 	  pathptr = NULL;
 	}
 
-    mysql_real_escape_string(mysql, esc_name, nameptr, strlen(nameptr));
-	sql_from_end += snprintf(sql_from_end, SQL_MAX, " JOIN %s AS t%d ON t%d.inode = t%d.parent",
-		 tables->tree, depth, depth-1, depth);
-	sql_where_end += snprintf(sql_where_end, SQL_MAX, " AND t%d.name = '%s'",
-		 depth, esc_name);
+        mysql_real_escape_string(mysql, esc_name, nameptr, strlen(nameptr));
+
+        written = snprintf(sql_from_end, sizeof(sql_from) - (sql_from_end - sql_from),
+                           " JOIN %s AS t%d ON t%d.inode = t%d.parent",
+                           tables->tree, depth, depth-1, depth);
+        if (written < 0 || (size_t)written >= sizeof(sql_from) - (size_t)(sql_from_end - sql_from)) {
+            free(pathptr_saved);
+            return -ENAMETOOLONG;
+        }
+        sql_from_end += written;
+
+        written = snprintf(sql_where_end, sizeof(sql_where) - (sql_where_end - sql_where),
+                           " AND t%d.name = '%s'",
+                           depth, esc_name);
+        if (written < 0 || (size_t)written >= sizeof(sql_where) - (size_t)(sql_where_end - sql_where)) {
+            free(pathptr_saved);
+            return -ENAMETOOLONG;
+        }
+        sql_where_end += written;
     }
     free(pathptr_saved);
 
     // TODO: Only run subquery when pointer to nlinks != NULL, otherwise we don't need it.
     if (nlinks != NULL) {
-        snprintf(sql, SQL_MAX, "SELECT t%d.inode, t%d.name, t%d.parent, "
-                        "       (SELECT COUNT(inode) FROM %s AS t%d WHERE t%d.inode=t%d.inode) "
-                        "               AS nlinks "
-                        "FROM %s WHERE %s",
-                    depth, depth, depth, 
-                    tables->tree, depth+1, depth+1, depth,
-                    sql_from, sql_where);
+        written = snprintf(sql, sizeof(sql),
+                           "SELECT t%d.inode, t%d.name, t%d.parent, "
+                           "       (SELECT COUNT(inode) FROM %s AS t%d WHERE t%d.inode=t%d.inode) "
+                           "               AS nlinks "
+                           "FROM %s WHERE %s",
+                           depth, depth, depth,
+                           tables->tree, depth+1, depth+1, depth,
+                           sql_from, sql_where);
     }
     else
     {
-        snprintf(sql, SQL_MAX, "SELECT t%d.inode, t%d.name, t%d.parent, 1 AS nlinks "
-        	     		   "FROM %s WHERE %s",
-        	     depth, depth, depth, 
-        	     sql_from, sql_where);
+        written = snprintf(sql, sizeof(sql),
+                           "SELECT t%d.inode, t%d.name, t%d.parent, 1 AS nlinks "
+                           "FROM %s WHERE %s",
+                           depth, depth, depth,
+                           sql_from, sql_where);
     }
+    if (written < 0 || (size_t)written >= sizeof(sql))
+        return -ENAMETOOLONG;
+
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
     ret = mysql_query(mysql, sql);
     if(ret){

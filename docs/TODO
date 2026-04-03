@@ -17,10 +17,13 @@
 
 * Implement path->inode cache and inode->stat cache
 	- getattr will greatly benefit from this
+	- query_inode_full() should eventually support walking a path in chunks
+	  from an intermediate inode, instead of always expanding one large SQL
+	  query from the root. This would allow very deep paths to remain
+	  resolvable without relying on large fixed SQL buffers.
 
 * Implement file buffering
 	- running query after every write() is insane
 
 * Implement support for xattr and acl
 	- FUSE has the methods at least for xattr
-
