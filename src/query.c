@@ -1280,21 +1280,35 @@ int query_rename(MYSQL *mysql, const char *from, const char *to)
     if (strcmp(from, "/") == 0 || strcmp(to, "/") == 0)
         return -EBUSY;
 
+    ret = mysql_query(mysql, "BEGIN");
+    if (ret) {
+        log_printf(LOG_ERROR, "Error: mysql_query(BEGIN)\n");
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        return -EIO;
+    }
+    transaction_started = 1;
+
     ret = query_getattr(mysql, from, &from_st);
     if (ret < 0)
-        return ret;
+        goto rollback;
 
     if (S_ISDIR(from_st.st_mode)) {
         size_t from_len = strlen(from);
 
         if (strncmp(from, to, from_len) == 0 &&
             (to[from_len] == '/' || to[from_len] == '\0'))
-            return -EINVAL;
+        {
+            ret = -EINVAL;
+            goto rollback;
+        }
     }
 
     inode = query_inode(mysql, from);
     if (inode < 0)
-        return inode;
+    {
+        ret = inode;
+        goto rollback;
+    }
 
     /* Lots of strdup()s follow because dirname() & basename()
      * may modify the original string. */
@@ -1302,7 +1316,10 @@ int query_rename(MYSQL *mysql, const char *from, const char *to)
     parent_from = query_inode(mysql, dirname(tmp));
     free(tmp);
     if (parent_from < 0)
-        return parent_from;
+    {
+        ret = parent_from;
+        goto rollback;
+    }
 
     tmp = strdup(from);
     old_name = basename(tmp);
@@ -1313,20 +1330,15 @@ int query_rename(MYSQL *mysql, const char *from, const char *to)
     parent_to = query_inode(mysql, dirname(tmp));
     free(tmp);
     if (parent_to < 0)
-        return parent_to;
+    {
+        ret = parent_to;
+        goto rollback;
+    }
 
     tmp = strdup(to);
     new_name = basename(tmp);
     mysql_real_escape_string(mysql, esc_new_name, new_name, strlen(new_name));
     free(tmp);
-
-    ret = mysql_query(mysql, "BEGIN");
-    if (ret) {
-        log_printf(LOG_ERROR, "Error: mysql_query(BEGIN)\n");
-        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
-        return -EIO;
-    }
-    transaction_started = 1;
 
     ret = query_getattr(mysql, to, &to_st);
     if (ret == 0) {
