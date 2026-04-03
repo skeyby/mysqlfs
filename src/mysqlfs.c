@@ -565,13 +565,12 @@ static int mysqlfs_rename(const char *from, const char *to)
 
     log_printf(LOG_D_CALL, "%s(%s -> %s)\n", __func__, from, to);
 
-    // FIXME: This should be wrapped in a transaction!!!
-    mysqlfs_unlink(to);
-
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
     ret = query_rename(dbconn, from, to);
+    if (ret < 0)
+        log_printf(LOG_ERROR, "Error: query_rename(%s -> %s)\n", from, to);
 
     pool_put(dbconn);
 

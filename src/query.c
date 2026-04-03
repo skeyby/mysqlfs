@@ -416,6 +416,7 @@ int query_rmdirentry(MYSQL *mysql, const char *name, long parent)
     /* The folder contains something, so we return ERROR */
     if(atoll(row[0])){
         log_printf(LOG_INFO, "Directory not empty: %lld file(s) found\n", atoll(row[0]));
+        mysql_free_result(result);
         return -ENOTEMPTY;
     }else{
         log_printf(LOG_DEBUG, "Directory is empty: %lld files found\n", atoll(row[0]));
@@ -1164,18 +1165,45 @@ ssize_t query_size_block(MYSQL *mysql, long inode, unsigned long seq)
 int query_rename(MYSQL *mysql, const char *from, const char *to)
 {
     int ret;
+    int target_exists = 0;
+    int transaction_started = 0;
     long inode, parent_to, parent_from;
+    long target_inode, target_parent, target_nlinks;
+    char target_name[PATH_MAX];
     char *tmp, *new_name, *old_name;
     char esc_new_name[PATH_MAX * 2], esc_old_name[PATH_MAX * 2];
     char sql[SQL_MAX];
+    struct stat from_st, to_st;
+
+    if (strcmp(from, to) == 0)
+        return 0;
+
+    if (strcmp(from, "/") == 0 || strcmp(to, "/") == 0)
+        return -EBUSY;
+
+    ret = query_getattr(mysql, from, &from_st);
+    if (ret < 0)
+        return ret;
+
+    if (S_ISDIR(from_st.st_mode)) {
+        size_t from_len = strlen(from);
+
+        if (strncmp(from, to, from_len) == 0 &&
+            (to[from_len] == '/' || to[from_len] == '\0'))
+            return -EINVAL;
+    }
 
     inode = query_inode(mysql, from);
+    if (inode < 0)
+        return inode;
 
     /* Lots of strdup()s follow because dirname() & basename()
      * may modify the original string. */
     tmp = strdup(from);
     parent_from = query_inode(mysql, dirname(tmp));
     free(tmp);
+    if (parent_from < 0)
+        return parent_from;
 
     tmp = strdup(from);
     old_name = basename(tmp);
@@ -1185,11 +1213,61 @@ int query_rename(MYSQL *mysql, const char *from, const char *to)
     tmp = strdup(to);
     parent_to = query_inode(mysql, dirname(tmp));
     free(tmp);
+    if (parent_to < 0)
+        return parent_to;
 
     tmp = strdup(to);
     new_name = basename(tmp);
     mysql_real_escape_string(mysql, esc_new_name, new_name, strlen(new_name));
     free(tmp);
+
+    ret = mysql_query(mysql, "BEGIN");
+    if (ret) {
+        log_printf(LOG_ERROR, "Error: mysql_query(BEGIN)\n");
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        return -EIO;
+    }
+    transaction_started = 1;
+
+    ret = query_getattr(mysql, to, &to_st);
+    if (ret == 0) {
+        target_exists = 1;
+
+        ret = query_inode_full(mysql, to, target_name, sizeof(target_name),
+                               &target_inode, &target_parent, &target_nlinks);
+        if (ret < 0)
+            goto rollback;
+
+        /* Renaming a path onto another hardlink of the same inode is a no-op. */
+        if (target_inode == inode)
+            goto commit;
+
+        if (S_ISDIR(from_st.st_mode) && !S_ISDIR(to_st.st_mode)) {
+            ret = -ENOTDIR;
+            goto rollback;
+        }
+
+        if (!S_ISDIR(from_st.st_mode) && S_ISDIR(to_st.st_mode)) {
+            ret = -EISDIR;
+            goto rollback;
+        }
+
+        ret = query_rmdirentry(mysql, target_name, target_parent);
+        if (ret < 0)
+            goto rollback;
+
+        if (target_nlinks <= 1) {
+            ret = query_set_deleted(mysql, target_inode);
+            if (ret < 0)
+                goto rollback;
+
+            ret = query_purge_deleted(mysql, target_inode);
+            if (ret < 0)
+                goto rollback;
+        }
+    } else if (ret != -ENOENT) {
+        goto rollback;
+    }
 
     snprintf(sql, SQL_MAX,
              "UPDATE %s "
@@ -1205,15 +1283,32 @@ int query_rename(MYSQL *mysql, const char *from, const char *to)
     if(ret){
         log_printf(LOG_ERROR, "Error: mysql_query()\n");
         log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        ret = -EIO;
+        goto rollback;
+    }
+
+    if (mysql_affected_rows(mysql) != 1) {
+        ret = -ENOENT;
+        goto rollback;
+    }
+
+commit:
+    if (transaction_started && mysql_query(mysql, "COMMIT")) {
+        log_printf(LOG_ERROR, "Error: mysql_query(COMMIT)\n");
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
         return -EIO;
     }
 
-    /*
-    if (mysql_affected_rows(mysql) < 1)
-      return -ETHIS_IS_STRANGE;	/ * Someone deleted the direntry? Do we care? * /
-    */
-
     return 0;
+
+rollback:
+    if (transaction_started)
+        mysql_query(mysql, "ROLLBACK");
+
+    if (target_exists && ret == -ENOENT)
+        ret = -EIO;
+
+    return ret;
 }
 
 /**
