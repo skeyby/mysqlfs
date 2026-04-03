@@ -633,6 +633,41 @@ long query_mkdir(MYSQL *mysql, const char *path, mode_t mode, long parent)
     return query_mknod(mysql, path, S_IFDIR | mode, 0, parent, 0);
 }
 
+long query_mkdir_root(MYSQL *mysql, mode_t mode, uid_t uid, gid_t gid)
+{
+    int ret;
+    char sql[SQL_MAX];
+    long new_inode_number;
+
+    snprintf(sql, SQL_MAX,
+             "INSERT INTO %s (name, parent) VALUES ('/', NULL)",
+             tables->tree);
+
+    log_printf(LOG_D_SQL, "sql=%s\n", sql);
+    ret = mysql_query(mysql, sql);
+    if (ret)
+        goto err_out;
+
+    new_inode_number = mysql_insert_id(mysql);
+
+    snprintf(sql, SQL_MAX,
+             "INSERT INTO %s (inode, mode, uid, gid, atime, ctime, mtime) "
+             "VALUES(%ld, %d, %d, %d, UNIX_TIMESTAMP(NOW()), "
+             "UNIX_TIMESTAMP(NOW()), UNIX_TIMESTAMP(NOW()))",
+             tables->inodes, new_inode_number, S_IFDIR | mode, uid, gid);
+
+    log_printf(LOG_D_SQL, "sql=%s\n", sql);
+    ret = mysql_query(mysql, sql);
+    if (ret)
+        goto err_out;
+
+    return new_inode_number;
+
+err_out:
+    log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+    return ret;
+}
+
 /**
  * Read a directory. This is done by listing the nodes whose parent matches
  * the given inode and calling the filler callback for each entry. The result

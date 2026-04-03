@@ -14,6 +14,7 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #include <fuse/fuse.h>
 
@@ -103,7 +104,7 @@ static int pool_check_mysql_setup(MYSQL *mysql)
     /* Create root directory if it doesn't exist. */
     ret = query_inode_full(mysql, "/", NULL, 0, NULL, NULL, NULL);
     if (ret == -ENOENT)
-	ret = query_mkdir(mysql, "/", 0755, 0);
+        ret = query_mkdir_root(mysql, 0755, geteuid(), getegid());
     if (ret < 0)
 	goto out;
 

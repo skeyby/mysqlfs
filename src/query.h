@@ -42,6 +42,7 @@ int query_rmdirentry(MYSQL *mysql, const char *name, long parent);
 long query_mknod(MYSQL *mysql, const char *path, mode_t mode, dev_t rdev,
                 long parent, int alloc_data);
 long query_mkdir(MYSQL *mysql, const char* path, mode_t mode, long parent);
+long query_mkdir_root(MYSQL *mysql, mode_t mode, uid_t uid, gid_t gid);
 int query_readdir(MYSQL *mysql, long inode, void *buf, fuse_fill_dir_t filler);
 int query_read(MYSQL *mysql, long inode, const char* buf, size_t size, off_t offset);
 int query_write(MYSQL *mysql, long inode, const char* buf, size_t size, off_t offset);
