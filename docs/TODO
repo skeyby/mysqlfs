@@ -21,6 +21,8 @@
 	  from an intermediate inode, instead of always expanding one large SQL
 	  query from the root. This would allow very deep paths to remain
 	  resolvable without relying on large fixed SQL buffers.
+	- query_getattr() could eventually expose the inode it already resolves,
+	  so mysqlfs_getattr() can avoid a second path lookup entirely.
 
 * Implement file buffering
 	- running query after every write() is insane

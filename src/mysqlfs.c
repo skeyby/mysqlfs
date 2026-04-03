@@ -46,34 +46,18 @@ static int mysqlfs_getattr(const char *path, struct stat *stbuf)
     memset(stbuf, 0, sizeof(struct stat));
 
     if ((dbconn = pool_get()) == NULL)
-      return -EMFILE;
+        return -EMFILE;
 
     ret = query_getattr(dbconn, path, stbuf);
 
-    if(ret){
+    if (ret) {
         if (ret != -ENOENT)
             log_printf(LOG_ERROR, "Error: query_getattr()\n");
         pool_put(dbconn);
         return ret;
-    }else{
-        long inode = query_inode(dbconn, path);
-        ssize_t size;
-        if(inode < 0){
-            log_printf(LOG_ERROR, "Error: query_inode()\n");
-            pool_put(dbconn);
-            return inode;
-        }
-
-        size = query_size(dbconn, inode);
-        if (size < 0) {
-            log_printf(LOG_ERROR, "Error: query_size()\n");
-            pool_put(dbconn);
-            return size;
-        }
-
-        stbuf->st_size = size;
-	stbuf->st_blocks = (blkcnt_t)((stbuf->st_size + 511) / 512);
     }
+
+    stbuf->st_blocks = (blkcnt_t)((stbuf->st_size + 511) / 512);
 
     pool_put(dbconn);
 

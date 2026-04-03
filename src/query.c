@@ -125,7 +125,7 @@ int query_getattr(MYSQL *mysql, const char *path, struct stat *stbuf)
       return ret;
 
     snprintf(sql, SQL_MAX,
-             "SELECT inode, mode, uid, gid, atime, mtime "
+             "SELECT inode, mode, uid, gid, atime, mtime, size "
              "FROM %s WHERE inode=%ld",
              tables->inodes, inode);
 
@@ -160,6 +160,7 @@ int query_getattr(MYSQL *mysql, const char *path, struct stat *stbuf)
     stbuf->st_gid = atol(row[3]);
     stbuf->st_atime = atol(row[4]);
     stbuf->st_mtime = atol(row[5]);
+    stbuf->st_size = row[6] ? atoll(row[6]) : 0;
     stbuf->st_nlink = nlinks;
     stbuf->st_blksize = DATA_BLOCK_SIZE;
 
