@@ -350,49 +350,54 @@ long query_inode(MYSQL *mysql, const char *path)
 int query_truncate(MYSQL *mysql, const char *path, off_t length)
 {
     int ret;
+    long inode;
     char sql[SQL_MAX];
     struct data_blocks_info info;
 
     fill_data_blocks_info(&info, length, 0);
 
-    long inode = query_inode(mysql, path);
+    inode = query_inode(mysql, path);
     if (inode < 0)
-      return inode;
+        return inode;
 
     /* Start a transaction */
     ret = mysql_query(mysql, "BEGIN");
     if (ret)
-      goto err_out;
+        goto err_out;
 
     ret = lock_inode(mysql, inode);
     if (ret < 0)
-      goto err_out;
+        goto err_out;
 
     snprintf(sql, SQL_MAX,
              "DELETE FROM %s WHERE inode=%ld AND seq > %ld",
-	     tables->data_blocks, inode, info.seq_last);
+             tables->data_blocks, inode, info.seq_last);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
-    if ((ret = mysql_query(mysql, sql))) goto err_out;
+    if ((ret = mysql_query(mysql, sql)))
+        goto err_out;
 
     snprintf(sql, SQL_MAX,
              "UPDATE %s SET data=RPAD(data, %zu, '\\0') "
-	     "WHERE inode=%ld AND seq=%ld",
+             "WHERE inode=%ld AND seq=%ld",
              tables->data_blocks, info.length_last, inode, info.seq_last);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
-    if ((ret = mysql_query(mysql, sql))) goto err_out;
+    if ((ret = mysql_query(mysql, sql)))
+        goto err_out;
 
     snprintf(sql, SQL_MAX,
              "UPDATE %s SET datalength=OCTET_LENGTH(data) "
-	     "WHERE inode=%ld AND seq=%ld",
+             "WHERE inode=%ld AND seq=%ld",
              tables->data_blocks, inode, info.seq_last);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
-    if ((ret = mysql_query(mysql, sql))) goto err_out;
+    if ((ret = mysql_query(mysql, sql)))
+        goto err_out;
 
     snprintf(sql, SQL_MAX,
              "UPDATE %s SET size=%ld WHERE inode=%ld",
              tables->inodes, length, inode);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
-    if ((ret = mysql_query(mysql, sql))) goto err_out;
+    if ((ret = mysql_query(mysql, sql)))
+        goto err_out;
 
     /* Close the transaction */
     ret = mysql_query(mysql, "COMMIT");
