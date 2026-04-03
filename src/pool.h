@@ -27,6 +27,8 @@ struct mysqlfs_opt {
     char *logfile;		/**< filename to which local debug/log information will be written */
     int bg;			/**< (used for autotest) whether a term-less execution should background */
     char *tableprefix;          /**< the prefix of the tables if applicable */
+    unsigned int allow_other;   /**< whether allow_other was requested */
+    unsigned int default_permissions; /**< whether default_permissions was requested */
 };
 
 /** Initalize pool and preallocate connections */

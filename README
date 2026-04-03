@@ -44,14 +44,14 @@ MySQLfs is a FUSE filesystem driver which stores files in a MySQL database.
 
 4. Mount the filesystem (please change the parameters <> accordingly)
    $ mkdir /mnt/fs
-   $ mysqlfs -ohost=<host> -ouser=<user> -opassword=<pass> -odatabase=<mysqlfs> /mnt/fs
+   $ mysqlfs -ohost=<host> -ouser=<user> -opassword=<pass> -odatabase=<mysqlfs> -odefault_permissions /mnt/fs
 
 5. Instead of setting connection options on the command line
    you may create a [mysqlfs] section in your ~/.my.cnf file and
    set the parameters there.
 
 6. Mount on boot: add into /etc/fstab the next line
-   mysqlfs /mnt/fs fuse host=<host>,user=<user>,password=<pass>,database=<mysqlfs>,allow_other,big_writes,x-systemd.automount 0 2
+   mysqlfs /mnt/fs fuse host=<host>,user=<user>,password=<pass>,database=<mysqlfs>,allow_other,default_permissions,big_writes,x-systemd.automount 0 2
 
 
 ===> Upgrading from 0.4.0 or lower versions
@@ -94,7 +94,14 @@ MySQLfs is a FUSE filesystem driver which stores files in a MySQL database.
     The corresponding option must be enabled in /etc/fuse.conf
 
   -odefault_permissions
-    Disable some extended permission checkings on files. 
+    Ask FUSE/kernel to enforce standard Unix permission checks based on
+    the uid/gid/mode metadata stored by mysqlfs.
+
+    This option is strongly recommended.
+
+    If you use -oallow_other, you should also use -odefault_permissions.
+    Using -oallow_other without -odefault_permissions may allow operations
+    that mysqlfs does not block on its own.
 
 ===> Compatibility Matrix
 
@@ -119,4 +126,3 @@ MySQLfs is a FUSE filesystem driver which stores files in a MySQL database.
 Copyright (C) 2006 Tsukasa Hamano <code@cuspy.org>
 Copyright (C) 2006 Michal Ludvig <michal@logix.cz>
 Copyright (C) 2012-2020 Andrea Brancatelli <andrea@brancatelli.it>
-

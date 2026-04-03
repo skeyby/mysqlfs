@@ -764,59 +764,58 @@ static struct fuse_opt mysqlfs_opts[] =
 
 static int mysqlfs_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs)
 {
+    struct mysqlfs_opt *opt = (struct mysqlfs_opt *)data;
 
-    struct mysqlfs_opt *opt = (struct mysqlfs_opt *) data;
-
-    switch (key)
-    {
+    switch (key) {
         case FUSE_OPT_KEY_OPT: /* dig through the list for matches */
-	/*
-	 * There are primitives for this in FUSE, but no need to change at this point
-	 */
-	    fprintf(stderr, "Ignoring option %s\n", arg);
+            /*
+             * There are primitives for this in FUSE, but no need to change at this point
+             */
+            fprintf(stderr, "Ignoring option %s\n", arg);
             break;
 
         case KEY_DEBUG_DNQ:
-        /*
-         * Debug: Dump Config and Quit -- used to debug options-handling changes
-         */
+            /*
+             * Debug: Dump Config and Quit -- used to debug options-handling changes
+             */
+            fprintf(stderr, "DEBUG: Dump and Quit\n\n");
+            fprintf(stderr, "connect: mysql://%s:%s@%s:%d/%s\n", opt->user, opt->passwd, opt->host, opt->port, opt->db);
+            fprintf(stderr, "connect: sock://%s\n", opt->socket);
+            fprintf(stderr, "fsck? %s\n", (opt->fsck ? "yes" : "no"));
+            fprintf(stderr, "group: %s\n", opt->mycnf_group);
+            fprintf(stderr, "pool: %d initial connections\n", opt->init_conns);
+            fprintf(stderr, "pool: %d idling connections\n", opt->max_idling_conns);
+            fprintf(stderr, "logfile: file://%s\n", opt->logfile);
+            fprintf(stderr, "bg? %s (debug)\n", (opt->bg ? "yes" : "no"));
+            fprintf(stderr, "table prefix: %s\n\n", opt->tableprefix);
 
-            fprintf (stderr, "DEBUG: Dump and Quit\n\n");
-            fprintf (stderr, "connect: mysql://%s:%s@%s:%d/%s\n", opt->user, opt->passwd, opt->host, opt->port, opt->db);
-            fprintf (stderr, "connect: sock://%s\n", opt->socket);
-            fprintf (stderr, "fsck? %s\n", (opt->fsck ? "yes" : "no"));
-            fprintf (stderr, "group: %s\n", opt->mycnf_group);
-            fprintf (stderr, "pool: %d initial connections\n", opt->init_conns);
-            fprintf (stderr, "pool: %d idling connections\n", opt->max_idling_conns);
-            fprintf (stderr, "logfile: file://%s\n", opt->logfile);
-            fprintf (stderr, "bg? %s (debug)\n", (opt->bg ? "yes" : "no"));
-            fprintf (stderr, "table prefix: %s\n\n", opt->tableprefix);
-
-            exit (2);
+            exit(2);
 
         case KEY_HELP: /* trigger usage call */
-	    usage ();
-            exit (0);
+            usage();
+            exit(0);
 
         case KEY_VERSION: /* show version and quit */
-	    fprintf (stderr, "MySQLfs %d.%d fuse-%d\n\n", MySQLfs_VERSION_MAJOR, MySQLfs_VERSION_MINOR, FUSE_VERSION);
-	    exit (0);
-            
+            fprintf(stderr, "MySQLfs %d.%d fuse-%d\n\n", MySQLfs_VERSION_MAJOR, MySQLfs_VERSION_MINOR, FUSE_VERSION);
+            exit(0);
+
         case KEY_NOPRIVATE:
-	    fprintf(stderr, " * File system will be shared (check fuse.conf to confirm this!)\n");
+            opt->allow_other = 1;
+            fprintf(stderr, " * File system will be shared (check fuse.conf to confirm this!)\n");
             fuse_opt_add_arg(outargs, "-oallow_other");
             break;
-                
+
         case KEY_NOPERMISSIONS:
-	    fprintf(stderr, " * Using default permissions\n");
+            opt->default_permissions = 1;
+            fprintf(stderr, " * Using default permissions\n");
             fuse_opt_add_arg(outargs, "-odefault_permissions");
             break;
-                
+
         case KEY_BIGWRITES:
-	    fprintf(stderr, " * Enabling big writes...\n");
+            fprintf(stderr, " * Enabling big writes...\n");
             fuse_opt_add_arg(outargs, "-obig_writes");
             break;
-                
+
         default: /* key != FUSE_OPT_KEY_OPT */
             fuse_opt_add_arg(outargs, arg);
             return 0;
@@ -832,22 +831,33 @@ int main(int argc, char *argv[])
 {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct mysqlfs_opt opt = {
-	.init_conns	= 1,
-	.max_idling_conns = 5,
-	.mycnf_group	= "mysqlfs",
-	.logfile	= "mysqlfs.log",
+        .init_conns = 1,
+        .max_idling_conns = 5,
+        .mycnf_group = "mysqlfs",
+        .logfile = "mysqlfs.log",
     };
 
     log_file = stderr;
 
-    fprintf (stderr, "\nMySQLfs version %d.%d startup. Using fuse-%d\n\n", MySQLfs_VERSION_MAJOR, MySQLfs_VERSION_MINOR, FUSE_VERSION);
+    fprintf(stderr, "\nMySQLfs version %d.%d startup. Using fuse-%d\n\n", MySQLfs_VERSION_MAJOR, MySQLfs_VERSION_MINOR, FUSE_VERSION);
 
     fuse_opt_parse(&args, &opt, mysqlfs_opts, mysqlfs_opt_proc);
+
+    if (!opt.default_permissions) {
+        fprintf(stderr, "WARNING: default_permissions is not enabled.\n");
+        fprintf(stderr, "WARNING: mysqlfs stores uid/gid/mode metadata, but it relies primarily on FUSE/kernel default permission checks for enforcement.\n");
+    }
+
+    if (opt.allow_other && !opt.default_permissions) {
+        fprintf(stderr, "WARNING: allow_other is enabled without default_permissions.\n");
+        fprintf(stderr, "WARNING: THIS CONFIGURATION MAY ALLOW OPERATIONS THAT MYSQLFS DOES NOT BLOCK ON ITS OWN.\n");
+        fprintf(stderr, "WARNING: STRONGLY RECOMMENDED: enable -odefault_permissions when using -oallow_other.\n");
+    }
 
     if (pool_init(&opt) < 0) {
         log_printf(LOG_ERROR, "Error: pool_init() failed\n");
         fuse_opt_free_args(&args);
-        return EXIT_FAILURE;        
+        return EXIT_FAILURE;
     }
 
     /*
@@ -855,8 +865,7 @@ int main(int argc, char *argv[])
      *
      * I (allanc) put this into here to allow for AUTOTEST, but then autotest has to seek-and-destroy the app.  This isn't quite perfect yet, I get some flakiness here, othertines the pid is 4 more than the parent, which is odd.
      */
-    if (0 < opt.bg)
-    {
+    if (0 < opt.bg) {
         if (0 < fork())
             return EXIT_SUCCESS;
         //else
