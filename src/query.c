@@ -108,7 +108,7 @@ fill_data_blocks_info(struct data_blocks_info *info, size_t size, off_t offset)
  *
  * @return 0 if successful
  * @return -EIO if the result of mysql_query() is non-zero
- * @return -ENOENT if the inode at the give path is not found (actually, if the number of results is not exactly 1)
+ * @return -ENOENT if the inode at the given path is not found (actually, if the number of results is not exactly 1)
  * @param mysql handle to connection to the database
  * @param path pathname to check
  * @param stbuf struct stat to fill with the inode contents
@@ -170,13 +170,13 @@ int query_getattr(MYSQL *mysql, const char *path, struct stat *stbuf)
 
 /**
  * Walk the directory tree to find the inode at the given absolute path,
- * storing name, inode, parent inode, and number of links.  Last developer of
- * this function indicates that the pathname may overflow -- sounds like a
- * good testcase :)
+ * storing name, inode, parent inode, and number of links. A previous note in
+ * this code warned that long pathnames may overflow the SQL buffer, which
+ * would make a good test case.
  *
  * If any of the name, inode, parent, or nlinks are given, those values will be
- * recorded form the inode data to the given buffers.  The name is written to
- * the given name_len.
+ * recorded from the inode data to the given buffers. The name is written to
+ * the buffer described by name_len.
  *
  * @return 0 if successful
  * @return -EIO if the result of mysql_query() is non-zero
@@ -488,12 +488,12 @@ int query_rmdirentry(MYSQL *mysql, const char *name, long parent)
 }
 
 /**
- * Create an inode.  This function creates a child entry of the specified dev_t
- * type and mode in the "parent" directory given as the "parent".  Any parent
- * directory information (ie "dirname(path)") is stripped out, leaving only
- * the base pathname, but it has to be there (perhaps a bug?) since this
- * function wants to strip out the path information that might conflict with
- * the parent node's pathname.
+ * Create an inode. This function creates a child entry of the specified dev_t
+ * type and mode in the directory identified by the parent inode. The input
+ * path is still expected to be a full pathname, but only its final component
+ * is used here because the parent inode is already provided separately. That
+ * makes the API somewhat redundant, but it still validates that the path
+ * contains a basename.
  *
  * @see http://linux.die.net/man/2/mknod
  *
@@ -575,13 +575,9 @@ long query_mkdir(MYSQL *mysql, const char *path, mode_t mode, long parent)
 }
 
 /**
- * Read a directory.  This is done by listing the nodes with a given node as
- * parent, calling the filler parameter (pointer-to-function) for each item.
- * The set of results is not ordered, so results would be in the "natural order"
- * of the database.
- *
- * for the kernel's implementation of a chmod() call in an inode on the FUSE
- * filesystem.
+ * Read a directory. This is done by listing the nodes whose parent matches
+ * the given inode and calling the filler callback for each entry. The result
+ * set is not ordered, so entries are returned in the database's natural order.
  *
  * @see http://linux.die.net/man/2/readdir
  *
@@ -839,13 +835,13 @@ go_away:
  *
  * This function takes an early bail-out if the size to write is zero, or if the total size to write exceeds the block size.
  *
- * This function checks to see if the previous block didn't exist -- in such
- * case, it then writes out a zero-length block.  The function then creates a
- * statement that has a '?' token representing the new data.  If the previous
- * data didn't exist, the function uses a "SET x == y" format; otherwise, a
- * "CONCAT (data, ?)".  The statement is snprintf'd, prepared, and executed; the
- * result produces either a 0 on success, or a -EIO on failure (with an error
- * message logged).
+ * This function checks whether the target block already exists. If it does
+ * not, it first creates an empty block. It then builds a prepared statement
+ * with a single '?' placeholder for the new payload. Depending on whether the
+ * write replaces an empty block, appends to existing data, or updates a range
+ * inside the block, the SQL statement changes accordingly. The prepared
+ * statement is then executed and returns either 0 on success or -EIO on
+ * failure, with the error logged.
  *
  * @return 0 on success; -EIO on failure
  * @param mysql handle to connection to the database
@@ -1064,16 +1060,15 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
         ret_size += ret;
     }
 
-    /* Update file size */
-    /* This has to be changed to better interact with replication.
-	Specifically there's no need to run the update as select
-	on the slave nodes. The solution for this is to put the
-	result of the select into a variable and then use the variable
-	to update the value of the DB. Doing this the replication
-	will save the already computer value and the slave will run
-	a simple update. Furthermore I have some feelings that 
-	this will also avoid problems with non-deterministic
-	updates.... */
+    /* Update file size.
+     *
+     * Keep the aggregate computation separate from the UPDATE so the writer
+     * materializes the final size first and then stores that value explicitly.
+     * This should interact better with replication, because replicas can apply
+     * a simple UPDATE with an already computed value instead of re-evaluating
+     * the aggregate query against their local state. It should also reduce the
+     * risk of non-deterministic updates.
+     */
     snprintf(sql, SQL_MAX,
              "SELECT SUM(datalength) INTO @iNodeSize FROM %s WHERE inode = %ld",
              tables->data_blocks, inode);
@@ -1113,11 +1108,11 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
 
 /**
  * Check the size of a file.  Check the value by reading the attribute stored
- * in the inode table itself.  The function does not summarize the size "live"
- * by summing the size of each data block; rather this value is updated in
- * query_fsck(), query_truncate(), write_one_block().  This trust in the
- * various write functions optimizes this function's response time and
- * reduces DB load.
+ * in the inode table itself. The function does not summarize the size live by
+ * summing each data block on every call; instead, the cached value is updated
+ * by query_fsck(), query_truncate(), and write_one_block(). Trusting those
+ * write paths to keep the value current improves response time and reduces DB
+ * load.
  *
  * @return total size of the file at the inode as represented in the inode block
  * @param mysql handle to connection to the database
@@ -1168,11 +1163,12 @@ ssize_t query_size(MYSQL *mysql, long inode)
 }
 
 /**
- * Returns the size of the given block (inode and sequence number).  Used only by write_one_block(), which is static, so this one can/should be static?
+ * Returns the size of the given block (inode and sequence number). This is
+ * currently used only by write_one_block().
  *
  * @return -ENXIO if the inode/seq pair is not found (zero rows returned, implying that block doesn't exist)
  * @return -EIO if no row is returned (implying an error in the query response, signaled by mysql_fetch_row() returning NULL)
- * @return 0 if the rown is NULL (implying no result?)
+ * @return 0 if the datalength column is NULL
  * @return 1 - DATA_BLOCK_SIZE (size of the actual block)
  * @param mysql handle to connection to the database
  * @param inode inode of the file in question
@@ -1680,7 +1676,7 @@ int query_fsck(MYSQL *mysql)
 /**
  * Return total inodes number
  *
- * @return total inode numers
+ * @return total inode numbers
  * @param mysql handle to connection to the database
  */
 fsfilcnt_t query_total_inodes(MYSQL *mysql)
