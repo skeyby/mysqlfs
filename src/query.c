@@ -34,13 +34,52 @@ struct table_names *tables;
 
 static inline int lock_inode(MYSQL *mysql, long inode)
 {
-    // TODO
+    int ret;
+    char sql[SQL_MAX];
+    MYSQL_RES *result;
+    MYSQL_ROW row;
+
+    snprintf(sql, SQL_MAX,
+             "SELECT inode FROM %s WHERE inode=%ld FOR UPDATE",
+             tables->inodes,
+             inode);
+
+    log_printf(LOG_D_SQL, "sql=%s\n", sql);
+
+    ret = mysql_query(mysql, sql);
+    if (ret) {
+        log_printf(LOG_ERROR, "ERROR: mysql_query()\n");
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        return -EIO;
+    }
+
+    result = mysql_store_result(mysql);
+    if (!result) {
+        log_printf(LOG_ERROR, "ERROR: mysql_store_result()\n");
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        return -EIO;
+    }
+
+    if (mysql_num_rows(result) != 1 || mysql_num_fields(result) != 1) {
+        mysql_free_result(result);
+        return -ENOENT;
+    }
+
+    row = mysql_fetch_row(result);
+    if (!row || !row[0]) {
+        mysql_free_result(result);
+        return -EIO;
+    }
+
+    mysql_free_result(result);
+
     return 0;
 }
 
 static inline int unlock_inode(MYSQL *mysql, long inode)
 {
-    // TODO
+    (void) mysql;
+    (void) inode;
     return 0;
 }
 
@@ -288,10 +327,14 @@ int query_truncate(MYSQL *mysql, const char *path, off_t length)
     if (inode < 0)
       return inode;
 
-    lock_inode(mysql, inode);
-
     /* Start a transaction */
     ret = mysql_query(mysql, "BEGIN");
+    if (ret)
+      goto err_out;
+
+    ret = lock_inode(mysql, inode);
+    if (ret < 0)
+      goto err_out;
 
     snprintf(sql, SQL_MAX,
              "DELETE FROM %s WHERE inode=%ld AND seq > %ld",
@@ -321,6 +364,12 @@ int query_truncate(MYSQL *mysql, const char *path, off_t length)
 
     /* Close the transaction */
     ret = mysql_query(mysql, "COMMIT");
+    if (ret) {
+        mysql_query(mysql, "ROLLBACK");
+        unlock_inode(mysql, inode);
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        return -EIO;
+    }
 
     unlock_inode(mysql, inode);
 
@@ -328,7 +377,7 @@ int query_truncate(MYSQL *mysql, const char *path, off_t length)
 
 err_out:
     /* Rollback the transaction */
-    ret = mysql_query(mysql, "ROLLBACK");
+    mysql_query(mysql, "ROLLBACK");
     unlock_inode(mysql, inode);
     log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
     return ret;
@@ -964,14 +1013,23 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
 
     /* Start a transaction */
     commitret = mysql_query(mysql, "BEGIN");
+    if (commitret)
+        return -EIO;
+
+    ret = lock_inode(mysql, inode);
+    if (ret < 0) {
+        mysql_query(mysql, "ROLLBACK");
+        return ret;
+    }
     
     /* Handle first block */
-    lock_inode(mysql, inode);
     ret = write_one_block(mysql, inode, info.seq_first, data,
 			  info.length_first, info.offset_first);
-    unlock_inode(mysql, inode);
-    if (ret < 0)
+    if (ret < 0) {
+        mysql_query(mysql, "ROLLBACK");
+        unlock_inode(mysql, inode);
         return ret;
+    }
     ret_size = ret;
 
     /* Shortcut - if last block seq is the same as first block
@@ -983,12 +1041,11 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
 
         /* Handle all full-sized intermediate blocks */
         for (seq = info.seq_first + 1; seq < info.seq_last; seq++) {
-                lock_inode(mysql, inode);
                 ret = write_one_block(mysql, inode, seq, ptr, DATA_BLOCK_SIZE, 0);
-                unlock_inode(mysql, inode);
                 if (ret < 0) {
                     /* Better rollback... */
                     commitret = mysql_query(mysql, "ROLLBACK");
+                    unlock_inode(mysql, inode);
                     return ret;
                 }
         	ptr += DATA_BLOCK_SIZE;
@@ -996,20 +1053,16 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
         }
 
         /* Handle last block */
-        lock_inode(mysql, inode);
         ret = write_one_block(mysql, inode, info.seq_last, ptr,
         			  info.length_last, 0);
-        unlock_inode(mysql, inode);
         if (ret < 0) {
             /* Better rollback... */
             commitret = mysql_query(mysql, "ROLLBACK");
+            unlock_inode(mysql, inode);
             return ret;
         }
         ret_size += ret;
     }
-
-    /* Let's commit the transaction (and the size update...) */
-    commitret = mysql_query(mysql, "COMMIT");
 
     /* Update file size */
     /* This has to be changed to better interact with replication.
@@ -1025,7 +1078,13 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
              "SELECT SUM(datalength) INTO @iNodeSize FROM %s WHERE inode = %ld",
              tables->data_blocks, inode);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
-    mysql_query(mysql, sql);
+    if (mysql_query(mysql, sql)) {
+	mysqlerrno = mysql_errno(mysql);
+	log_printf(LOG_ERROR, "mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
+        mysql_query(mysql, "ROLLBACK");
+        unlock_inode(mysql, inode);
+        return -EIO;
+    }
 
     snprintf(sql, SQL_MAX,
              "UPDATE %s SET size = @iNodeSize WHERE inode = %ld",
@@ -1034,8 +1093,20 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
     if(mysql_query(mysql, sql)) {
 	mysqlerrno = mysql_errno(mysql);
 	log_printf(LOG_ERROR, "mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
+        mysql_query(mysql, "ROLLBACK");
+        unlock_inode(mysql, inode);
         return -EIO;
     }
+
+    /* Let's commit the transaction once the inode size is consistent. */
+    commitret = mysql_query(mysql, "COMMIT");
+    if (commitret) {
+        mysql_query(mysql, "ROLLBACK");
+        unlock_inode(mysql, inode);
+        return -EIO;
+    }
+
+    unlock_inode(mysql, inode);
 
     return ret_size;
 }
