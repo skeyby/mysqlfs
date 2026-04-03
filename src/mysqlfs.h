@@ -20,6 +20,10 @@
 
 
 /** basic preprocessor-phase maximum macro */
+#ifndef MIN
 #define MIN(a,b)	((a) < (b) ? (a) : (b))
+#endif
 /** basic preprocessor-phase minimum macro */
+#ifndef MAX
 #define MAX(a,b)	((a) > (b) ? (a) : (b))
+#endif

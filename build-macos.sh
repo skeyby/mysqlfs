@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE_DIR="$SCRIPT_DIR"
 BUILD_DIR="${MYSQLFS_BUILD_DIR:-$SOURCE_DIR/build-macos}"
 CMAKE_BIN="${CMAKE_BIN:-}"
+MACOS_SDK_PATH="${MACOS_SDK_PATH:-}"
 
 find_mysql_prefix() {
     local formula
@@ -35,6 +36,11 @@ find_mysql_include_dir() {
 
     if ! prefix="$(find_mysql_prefix)"; then
         return 1
+    fi
+
+    if [ -f "$prefix/include/mysql/mysql.h" ]; then
+        printf '%s\n' "$prefix/include"
+        return 0
     fi
 
     if [ -d "$prefix/include/mysql" ]; then
@@ -111,6 +117,60 @@ find_fuse_library() {
     return 1
 }
 
+find_macos_sdk_path() {
+    if [ -n "$MACOS_SDK_PATH" ]; then
+        printf '%s\n' "$MACOS_SDK_PATH"
+        return 0
+    fi
+
+    if command -v xcrun >/dev/null 2>&1; then
+        xcrun --show-sdk-path
+        return 0
+    fi
+
+    return 1
+}
+
+find_libm_include_dir() {
+    local sdk_path
+
+    if [ -n "${LibM_INCLUDES:-}" ]; then
+        printf '%s\n' "$LibM_INCLUDES"
+        return 0
+    fi
+
+    if ! sdk_path="$(find_macos_sdk_path)"; then
+        return 1
+    fi
+
+    if [ -f "$sdk_path/usr/include/math.h" ]; then
+        printf '%s\n' "$sdk_path/usr/include"
+        return 0
+    fi
+
+    return 1
+}
+
+find_libm_library() {
+    local sdk_path
+
+    if [ -n "${LibM_LIBRARY:-}" ]; then
+        printf '%s\n' "$LibM_LIBRARY"
+        return 0
+    fi
+
+    if ! sdk_path="$(find_macos_sdk_path)"; then
+        return 1
+    fi
+
+    if [ -e "$sdk_path/usr/lib/libm.tbd" ]; then
+        printf '%s\n' "$sdk_path/usr/lib/libm.tbd"
+        return 0
+    fi
+
+    return 1
+}
+
 if ! command -v brew >/dev/null 2>&1; then
     echo "error: Homebrew is required on macOS to locate dependencies automatically" >&2
     exit 1
@@ -150,6 +210,16 @@ if ! FUSE_LIBRARIES="$(find_fuse_library)"; then
     exit 1
 fi
 
+if ! LibM_INCLUDES="$(find_libm_include_dir)"; then
+    echo "error: could not find LibM headers in the active macOS SDK; set LibM_INCLUDES explicitly" >&2
+    exit 1
+fi
+
+if ! LibM_LIBRARY="$(find_libm_library)"; then
+    echo "error: could not find libm in the active macOS SDK; set LibM_LIBRARY explicitly" >&2
+    exit 1
+fi
+
 mkdir -p "$BUILD_DIR"
 
 echo "Configuring mysqlfs for macOS"
@@ -160,14 +230,24 @@ echo "  mysql headers: $MYSQL_INCLUDE_DIR"
 echo "  mysql library: $MYSQL_LIBRARY"
 echo "  fuse headers:  $FUSE_INCLUDE_DIRS"
 echo "  fuse library:  $FUSE_LIBRARIES"
+echo "  libm headers:  $LibM_INCLUDES"
+echo "  libm library:  $LibM_LIBRARY"
 
-"$CMAKE_BIN" \
-    -S "$SOURCE_DIR" \
-    -B "$BUILD_DIR" \
-    -DMYSQL_INCLUDE_DIR="$MYSQL_INCLUDE_DIR" \
-    -DMYSQL_LIBRARY="$MYSQL_LIBRARY" \
-    -DFUSE_INCLUDE_DIRS="$FUSE_INCLUDE_DIRS" \
-    -DFUSE_LIBRARIES="$FUSE_LIBRARIES" \
-    "${@}"
+cmake_args=(
+    -S "$SOURCE_DIR"
+    -B "$BUILD_DIR"
+    -DMYSQL_INCLUDE_DIR="$MYSQL_INCLUDE_DIR"
+    -DMYSQL_LIBRARY="$MYSQL_LIBRARY"
+    -DFUSE_INCLUDE_DIRS="$FUSE_INCLUDE_DIRS"
+    -DFUSE_LIBRARIES="$FUSE_LIBRARIES"
+    -DLibM_INCLUDES="$LibM_INCLUDES"
+    -DLibM_LIBRARY="$LibM_LIBRARY"
+)
+
+if [ "$#" -gt 0 ]; then
+    cmake_args+=("$@")
+fi
+
+"$CMAKE_BIN" "${cmake_args[@]}"
 
 "$CMAKE_BIN" --build "$BUILD_DIR"

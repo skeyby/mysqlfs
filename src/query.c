@@ -12,6 +12,7 @@
 #include "Config.h"
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -393,8 +394,8 @@ int query_truncate(MYSQL *mysql, const char *path, off_t length)
         goto err_out;
 
     snprintf(sql, SQL_MAX,
-             "UPDATE %s SET size=%ld WHERE inode=%ld",
-             tables->inodes, length, inode);
+             "UPDATE %s SET size=%" PRIdMAX " WHERE inode=%ld",
+             tables->inodes, (intmax_t)length, inode);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
     if ((ret = mysql_query(mysql, sql)))
         goto err_out;
@@ -903,9 +904,9 @@ static int write_one_block(MYSQL *mysql, long inode,
     if (size == 0) return 0;
 
     if (offset + size > DATA_BLOCK_SIZE) {
-        log_printf(LOG_ERROR, "%s(): offset(%zu)+size(%zu)>max_block(%d)\n", 
-		   __func__, offset, size, DATA_BLOCK_SIZE);
-	return -EIO;
+        log_printf(LOG_ERROR, "%s(): offset(%zu)+size(%zu)>max_block(%d)\n",
+                   __func__, offset, size, DATA_BLOCK_SIZE);
+        return -EIO;
     }
 
     /* We expect the inode is already locked for this thread by caller! */
@@ -915,57 +916,63 @@ static int write_one_block(MYSQL *mysql, long inode,
         snprintf(sql, SQL_MAX,
                  "INSERT INTO %s SET inode=%ld, seq=%lu, data=''", tables->data_blocks, inode, seq);
         log_printf(LOG_D_SQL, "sql=%s\n", sql);
-        if(mysql_query(mysql, sql)){
-		mysqlerrno = mysql_errno(mysql);
-		log_printf(LOG_ERROR, "WriteOneBlock EmptyBlock - mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
-		return -EIO;
+        if (mysql_query(mysql, sql)) {
+            mysqlerrno = mysql_errno(mysql);
+            log_printf(LOG_ERROR, "WriteOneBlock EmptyBlock - mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
+            return -EIO;
         }
 
-	/* If I just created the block then it must be zero */
-	current_block_size = 0;
+        /* If I just created the block then it must be zero */
+        current_block_size = 0;
     }
 
     stmt = mysql_stmt_init(mysql);
-    if (!stmt)
-    {
+    if (!stmt) {
         log_printf(LOG_ERROR, "WriteOneBlock - mysql_stmt_init(), out of memory\n");
-	return -EIO;
+        return -EIO;
     }
 
     memset(bind, 0, sizeof(bind));
     if (offset == 0 && current_block_size == 0) {
         snprintf(sql, SQL_MAX,
                  "UPDATE %s "
-		 "SET data=? "
-		 "WHERE inode=%ld AND seq=%lu",
-		 tables->data_blocks, inode, seq);
+                 "SET data=? "
+                 "WHERE inode=%ld AND seq=%lu",
+                 tables->data_blocks, inode, seq);
     } else if (offset == current_block_size) {
         snprintf(sql, sizeof(sql),
                  "UPDATE %s "
-		 "SET data=CONCAT(data, ?) "
-		 "WHERE inode=%ld AND seq=%lu",
-		 tables->data_blocks, inode, seq);
+                 "SET data=CONCAT(data, ?) "
+                 "WHERE inode=%ld AND seq=%lu",
+                 tables->data_blocks, inode, seq);
     } else {
         size_t pos, new_size;
+
         pos = snprintf(sql, sizeof(sql),
-		 "UPDATE %s SET data=CONCAT(", tables->data_blocks);
-	if (offset > 0)
-	    pos += snprintf(sql + pos, sizeof(sql) - pos, "RPAD(IF(ISNULL(data),'', data), %ld, '\\0'),", offset);
-	pos += snprintf(sql + pos, sizeof(sql) - pos, "?,");
-	new_size = offset + size;
-	if (offset + size < current_block_size) {
-	    pos += snprintf(sql + pos, sizeof(sql) - pos, "SUBSTRING(data FROM %lu),", offset + size + 1);
-	    new_size = current_block_size;
-	}
-	sql[--pos] = '\0';	/* Remove the trailing comma. */
-	pos += snprintf(sql + pos, sizeof(sql) - pos, ") WHERE inode=%ld AND seq=%lu",
-			inode, seq);
+                       "UPDATE %s SET data=CONCAT(", tables->data_blocks);
+        if (offset > 0) {
+            pos += snprintf(sql + pos, sizeof(sql) - pos,
+                            "RPAD(IF(ISNULL(data),'', data), %" PRIdMAX ", '\\0'),",
+                            (intmax_t)offset);
+        }
+        pos += snprintf(sql + pos, sizeof(sql) - pos, "?,");
+        new_size = offset + size;
+        if (offset + size < current_block_size) {
+            pos += snprintf(sql + pos, sizeof(sql) - pos,
+                            "SUBSTRING(data FROM %" PRIuMAX "),",
+                            (uintmax_t)(offset + size + 1));
+            new_size = current_block_size;
+        }
+        sql[--pos] = '\0';    /* Remove the trailing comma. */
+        pos += snprintf(sql + pos, sizeof(sql) - pos,
+                        ") WHERE inode=%ld AND seq=%lu",
+                        inode, seq);
     }
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
 
     if (mysql_stmt_prepare(stmt, sql, strlen(sql))) {
-	log_printf(LOG_ERROR, "mysql_stmt_prepare() failed: %s\n", mysql_stmt_error(stmt));
-	goto err_out;
+        log_printf(LOG_ERROR, "mysql_stmt_prepare() failed: %s\n", mysql_stmt_error(stmt));
+        goto err_out;
     }
 
     if (mysql_stmt_param_count(stmt) != 1) {

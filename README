@@ -29,6 +29,9 @@ MySQLfs is a FUSE filesystem driver which stores files in a MySQL database.
   #> brew install --cask macfuse
   #> ./build-macos.sh
 
+  The macOS helper script auto-detects Homebrew MySQL and macFUSE paths
+  and performs an out-of-tree build in ./build-macos.
+
   Run the following commands:
   #> cmake .
   #> make
