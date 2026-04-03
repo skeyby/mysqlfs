@@ -8,6 +8,11 @@
 
 - Improve connection-pool robustness.
   Avoid returning `-EMFILE` when no pooled connection is immediately available.
+  Also remove the dependency on the deprecated MySQL
+  `MYSQL_OPT_RECONNECT` option. A better approach would be to treat a
+  dead connection as an operation failure, drop it from the pool, and
+  reopen a fresh connection explicitly on the next checkout instead of
+  relying on transparent reconnect inside the client library.
 
 - Improve security behavior.
   mysqlfs stores permission metadata, but it still relies mainly on

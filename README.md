@@ -154,6 +154,7 @@ During development mysqlfs has been checked against:
 - Debian Linux 6
 - Debian Linux 7
 - Debian Linux 9
+- macOS 26
 - MySQL 5.1
 - MySQL 5.5
 - MySQL 5.6

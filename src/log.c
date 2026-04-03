@@ -28,80 +28,79 @@ int log_debug_mask = 0;
 
 #define BUFSIZE 512
 
-static char *currentTS(void)
+static void currentTS(char *buf, size_t bufsize)
 {
-	static char buf[BUFSIZE];
-	time_t curtime;
+    time_t curtime;
+    struct tm curtm;
 
-	bzero(buf, BUFSIZE);
-	curtime = time(NULL);
-	strftime(buf, BUFSIZE, "%Y-%m-%d %H:%M:%S", localtime(&curtime));
-
-	return buf;
+    bzero(buf, bufsize);
+    curtime = time(NULL);
+    localtime_r(&curtime, &curtm);
+    strftime(buf, bufsize, "%Y-%m-%d %H:%M:%S", &curtm);
 }
 
 int log_printf(enum log_types type, const char *logmsg, ...)
 {
-	va_list args;
-	char buf[BUFSIZE];
+    va_list args;
+    char ts[BUFSIZE];
+    int ret;
 
-	if ((log_types_mask & type & LOG_MASK_MAJOR) == 0)
-	  return 0;
+    if ((log_types_mask & type & LOG_MASK_MAJOR) == 0)
+        return 0;
 
-	if ((type & LOG_DEBUG) && (log_debug_mask & type & LOG_MASK_MINOR) == 0)
-	  return 0;
+    if ((type & LOG_DEBUG) && (log_debug_mask & type & LOG_MASK_MINOR) == 0)
+        return 0;
 
 /*
  * Subtypes for INFO and ERROR are not yet defined
-	if ((type & LOG_INFO) && (log_info_mask & type & LOG_MASK_MINOR) == 0)
-	  return 0;
+    if ((type & LOG_INFO) && (log_info_mask & type & LOG_MASK_MINOR) == 0)
+      return 0;
 
-	if ((type & LOG_ERROR) && (log_error_mask & type & LOG_MASK_MINOR) == 0)
-	  return 0;
+    if ((type & LOG_ERROR) && (log_error_mask & type & LOG_MASK_MINOR) == 0)
+      return 0;
 */
 
-	bzero(buf, BUFSIZE);
-	snprintf(buf, BUFSIZE, "%s %d %s", currentTS(), getpid(), logmsg);
-	va_start(args, logmsg);
+    currentTS(ts, sizeof(ts));
+    fprintf(log_file, "%s %d ", ts, getpid());
 
-	return vfprintf(log_file, buf, args);
+    va_start(args, logmsg);
+    ret = vfprintf(log_file, logmsg, args);
+    va_end(args);
+
+    return ret;
 }
 
 FILE *log_init(const char *filename, int verbose)
 {
-	FILE    *f;
+    FILE *f;
 
-    if(!strcmp(filename, "stdout")){
+    if (!strcmp(filename, "stdout")) {
         return stdout;
-    }else if(!strcmp(filename, "stderr")){
+    } else if (!strcmp(filename, "stderr")) {
         return stderr;
     }
 
-	if (verbose)
-		printf(" * Opening logfile '%s': ", filename);
+    if (verbose)
+        printf(" * Opening logfile '%s': ", filename);
 
+    if ((f = fopen(filename, "a+")) == NULL) {
+        if (verbose)
+            printf("failed: %s\n", strerror(errno));
+        exit(1);
+    }
 
-	if ((f = fopen(filename, "a+")) == NULL)
-	{
-		if (verbose)
-			printf("failed: %s\n", strerror(errno));
-		exit(1);
-	}
+    setbuf(f, NULL);
+    if (verbose)
+        printf(" OK\n");
 
-	setbuf(f, NULL);
-	if (verbose)
-		printf(" OK\n");
-
-	return f;
+    return f;
 }
 
 void log_finish(FILE *f)
 {
-
-    if(f == stdout || f == stderr){
+    if (f == stdout || f == stderr) {
         return;
     }
 
-	fclose(f);
+    fclose(f);
 }
-
