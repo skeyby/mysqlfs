@@ -66,7 +66,6 @@ DELIMITER ;
 /*!50003 SET SESSION SQL_MODE=@OLD_SQL_MODE */;
 
 UPDATE statistics SET statistics.value = (select COUNT(*) from inodes) WHERE statistics.key = 'total_inodes_count';
-UPDATE statistics SET statistics.value = (select sum(size) from inodes) WHERE statistics.key = 'total_inodes_size';
+UPDATE statistics SET statistics.value = (select COALESCE(sum(size), 0) from inodes) WHERE statistics.key = 'total_inodes_size';
 
 REPLACE INTO SW_DETAILS SET `KEY` = "VERSION", `VALUE` = "1.0.0";
-

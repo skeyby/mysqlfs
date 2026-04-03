@@ -57,8 +57,8 @@ CREATE TABLE `tree` (
   `inode` bigint(20) unsigned NOT NULL auto_increment,
   `parent` int(10) unsigned default NULL,
   `name` varchar(255) NOT NULL,
+  PRIMARY KEY (`inode`),
   UNIQUE KEY `name` (`name`,`parent`),
-  KEY `inode` (`inode`),
   KEY `parent` (`parent`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -70,4 +70,3 @@ CREATE TABLE `tree` (
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
-

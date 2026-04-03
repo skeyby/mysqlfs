@@ -14,9 +14,55 @@
 ##
 ##
 
-DBUpdateScripts="/usr/local/share/mysqlfs/sql/update"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+DEFAULT_DB_UPDATE_SCRIPTS="/usr/local/share/mysqlfs/sql/update"
+REPO_DB_UPDATE_SCRIPTS="$SCRIPT_DIR/src/sql/updates"
 
-clear
+if [ -n "$DBUpdateScripts" ]; then
+    :
+elif [ -d "$DEFAULT_DB_UPDATE_SCRIPTS" ]; then
+    DBUpdateScripts="$DEFAULT_DB_UPDATE_SCRIPTS"
+elif [ -d "$REPO_DB_UPDATE_SCRIPTS" ]; then
+    DBUpdateScripts="$REPO_DB_UPDATE_SCRIPTS"
+else
+    echo "Unable to locate SQL update scripts." >&2
+    exit 1
+fi
+
+if [ -n "$MYSQLFS_SETUP_ASSUME_YES" ]; then
+    MYSQLFS_SETUP_ASSUME_YES=1
+else
+    MYSQLFS_SETUP_ASSUME_YES=0
+fi
+
+mysql_exec() {
+    if [ -n "$DBSocket" ]; then
+        mysql -N --socket="$DBSocket" -u "$DBUser" --password="$DBPass" "$DBName"
+    else
+        mysql -N -h "$DBHost" -u "$DBUser" --password="$DBPass" "$DBName"
+    fi
+}
+
+confirm_or_abort() {
+    if [ "$MYSQLFS_SETUP_ASSUME_YES" -eq 1 ]; then
+        return 0
+    fi
+
+    printf "#> "
+    read Correct
+
+    if [ "$Correct" != "y" ]; then
+      echo
+      echo Aborting setup. Please restart $0 to retry.
+      echo -------------------------------------------
+      echo
+      exit 1
+    fi
+}
+
+if [ -t 1 ]; then
+    clear
+fi
 echo 
 echo Welcome to MySQLfs database setup script - relase 1.0
 echo
@@ -32,32 +78,40 @@ echo
 echo In order to setup/upgrade your DB we need some informations.
 echo
 
-echo "Please insert your DB host (leave blank for localhost):"
-printf "#> "
-read DBHost
 if [ "$DBHost" = "" ]; then
-	DBHost="localhost"
+    echo "Please insert your DB host (leave blank for localhost):"
+    printf "#> "
+    read DBHost
+fi
+if [ "$DBHost" = "" ]; then
+    DBHost="localhost"
 fi
 
-echo "Please insert your MySQLfs DB name (leave blank for mysqlfs):"
-printf "#> "
-read DBName
 if [ "$DBName" = "" ]; then
-	DBName="mysqlfs"
+    echo "Please insert your MySQLfs DB name (leave blank for mysqlfs):"
+    printf "#> "
+    read DBName
+fi
+if [ "$DBName" = "" ]; then
+    DBName="mysqlfs"
 fi
 
-echo "Please insert your MySQLfs username (leave blank for mysqlfs):"
-printf "#> "
-read DBUser
 if [ "$DBUser" = "" ]; then
-	DBUser="mysqlfs"
+    echo "Please insert your MySQLfs username (leave blank for mysqlfs):"
+    printf "#> "
+    read DBUser
+fi
+if [ "$DBUser" = "" ]; then
+    DBUser="mysqlfs"
 fi
 
-echo "Please insert your MySQLfs password (leave blank for mysqlfs):"
-printf "#> "
-read DBPass
 if [ "$DBPass" = "" ]; then
-	DBPass="mysqlfs"
+    echo "Please insert your MySQLfs password (leave blank for mysqlfs):"
+    printf "#> "
+    read DBPass
+fi
+if [ "$DBPass" = "" ]; then
+    DBPass="mysqlfs"
 fi
 
 echo
@@ -65,20 +119,11 @@ echo Please confirm the following settings:
 echo mysql://$DBUser:$DBPass@$DBHost/$DBName
 echo
 echo "Correct? (y/n)"
-printf "#> "
-read Correct
-
-if [ "$Correct" != "y" ]; then
-  echo
-  echo Aborting setup. Please restart $0 to retry.
-  echo -------------------------------------------
-  echo
-  exit 1
-fi
+confirm_or_abort
 
 echo 
 echo Checking if we already a database...
-TableExists=`echo "SHOW TABLES LIKE 'tree';" | mysql -N -h $DBHost -u $DBUser --password=$DBPass $DBName`
+TableExists=`echo "SHOW TABLES LIKE 'tree';" | mysql_exec`
 
 if [ "$TableExists" != "tree" ]; then
   echo "A 'tree' table doesn't seem to exist in your database."
@@ -86,19 +131,10 @@ if [ "$TableExists" != "tree" ]; then
   echo "If this your first installation this is normal."
   echo
   echo "Continue creating a new database? (y/n)"
-  printf "#> "
-  read Correct
-
-  if [ "$Correct" != "y" ]; then
-    echo
-    echo Aborting setup. Please restart $0 to retry.
-    echo -------------------------------------------
-    echo
-    exit 1
-  fi
+  confirm_or_abort
 
   echo Executing $DBUpdateScripts/initial_schema.sql
-  mysql -N -h $DBHost -u $DBUser --password=$DBPass $DBName < $DBUpdateScripts/initial_schema.sql > /tmp/dbupdate_stdout.log 2> /tmp/dbupdate_stderr.log
+  mysql_exec < "$DBUpdateScripts/initial_schema.sql" > /tmp/dbupdate_stdout.log 2> /tmp/dbupdate_stderr.log
   ErrorLevel=$?
   if [ $ErrorLevel -ne 0 ]; then  
     echo 
@@ -118,7 +154,7 @@ fi
 
 echo 
 echo Checking for the DATABASE_VERSION table...
-TableExists=`echo "SHOW TABLES LIKE 'DATABASE_VERSION';" | mysql -N -h $DBHost -u $DBUser --password=$DBPass $DBName`
+TableExists=`echo "SHOW TABLES LIKE 'DATABASE_VERSION';" | mysql_exec`
 
 if [ "$TableExists" != "DATABASE_VERSION" ]; then
   echo "A 'DATABASE_VERSION' table doesn't seem to exist in your database."
@@ -129,19 +165,10 @@ if [ "$TableExists" != "DATABASE_VERSION" ]; then
   echo RELEASE TO BE AT LEAST 0.4.1!!!!!!
   echo
   echo "Continue creating DATABASE_VERSION? (y/n)"
-  printf "#> "
-  read Correct
-
-  if [ "$Correct" != "y" ]; then
-    echo
-    echo Aborting setup. Please restart $0 to retry.
-    echo -------------------------------------------
-    echo
-    exit 1
-  fi
+  confirm_or_abort
 
   echo Executing $DBUpdateScripts/00000000.sql
-  mysql -N -h $DBHost -u $DBUser --password=$DBPass $DBName < $DBUpdateScripts/00000000.sql > /tmp/dbupdate_stdout.log 2> /tmp/dbupdate_stderr.log
+  mysql_exec < "$DBUpdateScripts/00000000.sql" > /tmp/dbupdate_stdout.log 2> /tmp/dbupdate_stderr.log
   ErrorLevel=$?
   if [ $ErrorLevel -ne 0 ]; then  
     echo 
@@ -161,7 +188,7 @@ fi
 
 echo
 echo Checking current DATABASE_VERSION:
-CurrentDB=`echo "SELECT MAX(CURRENT_VERSION) FROM DATABASE_VERSION;" | mysql -N -h $DBHost -u $DBUser --password=$DBPass $DBName`
+CurrentDB=`echo "SELECT MAX(CURRENT_VERSION) FROM DATABASE_VERSION;" | mysql_exec`
 
 if [ "$CurrentDB" = "NULL" ]; then
   CurrentDB=0
@@ -177,7 +204,7 @@ echo "Searching for next DB upgrades (starting from #$NextDB)"
 
 while [ -f $DBUpdateScripts/$NextFile.sql ]; do
   echo "Found $DBUpdateScripts/$NextFile.sql - executing it"
-  mysql -N -h $DBHost -u $DBUser --password=$DBPass $DBName < $DBUpdateScripts/$NextFile.sql > /tmp/dbupdate_stdout.log 2> /tmp/dbupdate_stderr.log
+  mysql_exec < "$DBUpdateScripts/$NextFile.sql" > /tmp/dbupdate_stdout.log 2> /tmp/dbupdate_stderr.log
   ErrorLevel=$?
   if [ $ErrorLevel -ne 0 ]; then
    echo "Error applying update $NextDB"
@@ -187,7 +214,7 @@ while [ -f $DBUpdateScripts/$NextFile.sql ]; do
    rm  /tmp/dbupdate_stderr.log
    exit 1
   else
-   echo "INSERT INTO DATABASE_VERSION SET CURRENT_VERSION = $NextDB, LAST_CHANGE=NOW();" | mysql -N -h $DBHost -u $DBUser --password=$DBPass $DBName
+   echo "INSERT INTO DATABASE_VERSION SET CURRENT_VERSION = $NextDB, LAST_CHANGE=NOW();" | mysql_exec
    echo "Updating DATABASE_VERSION to version $NextDB"
   fi
   rm /tmp/dbupdate_std*.log
