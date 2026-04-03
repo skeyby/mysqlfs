@@ -13,7 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -58,14 +57,22 @@ static int mysqlfs_getattr(const char *path, struct stat *stbuf)
         return ret;
     }else{
         long inode = query_inode(dbconn, path);
+        ssize_t size;
         if(inode < 0){
             log_printf(LOG_ERROR, "Error: query_inode()\n");
             pool_put(dbconn);
             return inode;
         }
 
-        stbuf->st_size = query_size(dbconn, inode);
-	stbuf->st_blocks = (blkcnt_t)ceill(stbuf->st_size / 512);
+        size = query_size(dbconn, inode);
+        if (size < 0) {
+            log_printf(LOG_ERROR, "Error: query_size()\n");
+            pool_put(dbconn);
+            return size;
+        }
+
+        stbuf->st_size = size;
+	stbuf->st_blocks = (blkcnt_t)((stbuf->st_size + 511) / 512);
     }
 
     pool_put(dbconn);
