@@ -7,6 +7,24 @@ fail() {
     exit 1
 }
 
+default_mount_root() {
+    case "$(uname -s)" in
+        Darwin)
+            printf '%s\n' "${MYSQLFS_TEST_TMPDIR:-/private/tmp}"
+            ;;
+        *)
+            printf '%s\n' "${MYSQLFS_TEST_TMPDIR:-${TMPDIR:-/tmp}}"
+            ;;
+    esac
+}
+
+make_mountpoint() {
+    local mount_root
+
+    mount_root="$(default_mount_root)"
+    mktemp -d "$mount_root/$1.XXXXXX"
+}
+
 mysql_test_args() {
     if [ -n "${MYSQLFS_TEST_SOCKET:-}" ]; then
         printf -- "--socket=%s\n" "$MYSQLFS_TEST_SOCKET"
@@ -47,6 +65,40 @@ wait_for_mount() {
 
     while [ "$attempt" -lt 50 ]; do
         if mount | grep "on $mountpoint " >/dev/null 2>&1; then
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.1
+    done
+
+    return 1
+}
+
+stat_mode() {
+    local path="$1"
+
+    if stat -f '%Mp%Lp' "$path" >/dev/null 2>&1; then
+        stat -f '%Mp%Lp' "$path"
+        return 0
+    fi
+
+    if stat -c '%a' "$path" >/dev/null 2>&1; then
+        stat -c '%a' "$path"
+        return 0
+    fi
+
+    return 1
+}
+
+wait_for_mount_ready() {
+    local mountpoint="$1"
+    local expected_mode="$2"
+    local attempt=0
+    local mode=""
+
+    while [ "$attempt" -lt 50 ]; do
+        mode="$(stat_mode "$mountpoint" || true)"
+        if [ "$mode" = "$expected_mode" ]; then
             return 0
         fi
         attempt=$((attempt + 1))

@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/test-lib.sh"
 
-mountpoint="$(mktemp -d "${TMPDIR:-/tmp}/mysqlfs-root-bootstrap.XXXXXX")"
+mountpoint="$(make_mountpoint "mysqlfs-root-bootstrap")"
 mysqlfs_pid=""
 
 cleanup() {
@@ -15,6 +15,8 @@ cleanup() {
 trap cleanup EXIT
 
 "$MYSQLFS_TEST_BIN" \
+    -f \
+    -s \
     -obig_writes \
     -odefault_permissions \
     -osocket="$MYSQLFS_TEST_SOCKET" \
@@ -30,6 +32,12 @@ if ! kill -0 "$mysqlfs_pid" >/dev/null 2>&1; then
     cat /tmp/mysqlfs-test-root-bootstrap.stdout.log >&2 || true
     cat /tmp/mysqlfs-test-root-bootstrap.stderr.log >&2 || true
     fail "mysqlfs did not stay alive long enough to initialize the filesystem"
+fi
+
+if ! wait_for_mount_ready "$mountpoint" "0755"; then
+    cat /tmp/mysqlfs-test-root-bootstrap.stdout.log >&2 || true
+    cat /tmp/mysqlfs-test-root-bootstrap.stderr.log >&2 || true
+    fail "mysqlfs did not become ready on the mountpoint in time"
 fi
 
 if ! wait_for_query_result "1" "SELECT COUNT(*) FROM tree WHERE name='/' AND parent IS NULL;"; then

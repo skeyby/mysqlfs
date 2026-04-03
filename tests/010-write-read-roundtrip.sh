@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/test-lib.sh"
 
-mountpoint="$(mktemp -d "${TMPDIR:-/tmp}/mysqlfs-write-read.XXXXXX")"
+mountpoint="$(make_mountpoint "mysqlfs-write-read")"
 mysqlfs_pid=""
 test_file="$mountpoint/roundtrip.txt"
 expected_content="mysqlfs roundtrip test content"
@@ -17,6 +17,8 @@ cleanup() {
 trap cleanup EXIT
 
 "$MYSQLFS_TEST_BIN" \
+    -f \
+    -s \
     -obig_writes \
     -odefault_permissions \
     -osocket="$MYSQLFS_TEST_SOCKET" \
@@ -32,6 +34,12 @@ if ! wait_for_query_result "1" "SELECT COUNT(*) FROM tree WHERE name='/' AND par
     cat /tmp/mysqlfs-test-write-read.stdout.log >&2 || true
     cat /tmp/mysqlfs-test-write-read.stderr.log >&2 || true
     fail "mysqlfs did not create the root directory entry in time"
+fi
+
+if ! wait_for_mount_ready "$mountpoint" "0755"; then
+    cat /tmp/mysqlfs-test-write-read.stdout.log >&2 || true
+    cat /tmp/mysqlfs-test-write-read.stderr.log >&2 || true
+    fail "mysqlfs did not become ready on the mountpoint in time"
 fi
 
 printf '%s' "$expected_content" > "$test_file"
