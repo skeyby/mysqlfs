@@ -773,10 +773,11 @@ static int mysqlfs_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     switch (key) {
         case FUSE_OPT_KEY_OPT: /* dig through the list for matches */
             /*
-             * There are primitives for this in FUSE, but no need to change at this point
+             * Forward FUSE-native options we do not handle ourselves.
              */
-            fprintf(stderr, "Ignoring option %s\n", arg);
-            break;
+            fprintf(stderr, "Passing FUSE option %s\n", arg);
+            fuse_opt_add_arg(outargs, arg);
+            return 0;
 
         case KEY_DEBUG_DNQ:
             /*
