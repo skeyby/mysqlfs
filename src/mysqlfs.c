@@ -460,45 +460,9 @@ static int mysqlfs_release(const char *path, struct fuse_file_info *fi)
 
 static int mysqlfs_link(const char *from, const char *to)
 {
-    int ret;
-    long inode, new_parent;
-    MYSQL *dbconn;
-    char *tmp, *name, esc_name[PATH_MAX * 2];
-
     log_printf(LOG_D_CALL, "link(%s, %s)\n", from, to);
-
-    if ((dbconn = pool_get()) == NULL)
-      return -EMFILE;
-
-    inode = query_inode(dbconn, from);
-    if(inode < 0){
-        pool_put(dbconn);
-        return inode;
-    }
-
-    tmp = strdup(to);
-    name = dirname(tmp);
-    new_parent = query_inode(dbconn, name);
-    free(tmp);
-    if (new_parent < 0) {
-        pool_put(dbconn);
-        return new_parent;
-    }
-
-    tmp = strdup(to);
-    name = basename(tmp);
-    mysql_real_escape_string(dbconn, esc_name, name, strlen(name));
-    free(tmp);
-
-    ret = query_mkdirentry(dbconn, inode, esc_name, new_parent);
-    if(ret < 0){
-        pool_put(dbconn);
-        return ret;
-    }
-
-    pool_put(dbconn);
-
-    return 0;
+    log_printf(LOG_INFO, "Hard links are not supported\n");
+    return -EOPNOTSUPP;
 }
 
 static int mysqlfs_symlink(const char *from, const char *to)

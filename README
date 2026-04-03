@@ -129,6 +129,13 @@ MySQLfs is a FUSE filesystem driver which stores files in a MySQL database.
   NOTE:
   * FreeBSD 9 + FUSE-KMOD is NOT supported
 
+===> Known limitations
+
+  * Hard links are not supported.
+    mysqlfs supports symbolic links, but it does not expose POSIX hard link
+    semantics. Attempting to create a hard link will fail with an operation
+    not supported error.
+
 ===> Authors
 
 Copyright (C) 2006 Tsukasa Hamano <code@cuspy.org>
