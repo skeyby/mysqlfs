@@ -101,7 +101,10 @@ static int mysqlfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     ret = query_readdir(dbconn, inode, buf, filler);
     pool_put(dbconn);
 
-    return 0;
+    if (ret < 0)
+        log_printf(LOG_ERROR, "Error: query_readdir(%s)\n", path);
+
+    return ret;
 }
 
 /** FUSE function for mknod(const char *pathname, mode_t mode, dev_t dev); API call.  @see http://linux.die.net/man/2/mknod */
