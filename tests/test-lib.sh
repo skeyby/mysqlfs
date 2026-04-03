@@ -7,6 +7,13 @@ fail() {
     exit 1
 }
 
+dump_mysqlfs_logs() {
+    local log_prefix="$1"
+
+    cat "/tmp/${log_prefix}.stdout.log" >&2 || true
+    cat "/tmp/${log_prefix}.stderr.log" >&2 || true
+}
+
 default_mount_root() {
     case "$(uname -s)" in
         Darwin)
@@ -23,6 +30,26 @@ make_mountpoint() {
 
     mount_root="$(default_mount_root)"
     mktemp -d "$mount_root/$1.XXXXXX"
+}
+
+start_mysqlfs_test() {
+    local mountpoint="$1"
+    local log_prefix="$2"
+
+    "$MYSQLFS_TEST_BIN" \
+        -f \
+        -s \
+        -obig_writes \
+        -odefault_permissions \
+        -osocket="$MYSQLFS_TEST_SOCKET" \
+        -odatabase="$MYSQLFS_TEST_DB_NAME" \
+        -ouser="$MYSQLFS_TEST_DB_USER" \
+        -opassword="$MYSQLFS_TEST_DB_PASS" \
+        "$mountpoint" \
+        >"/tmp/${log_prefix}.stdout.log" \
+        2>"/tmp/${log_prefix}.stderr.log" &
+
+    echo $!
 }
 
 mysql_test_args() {
@@ -108,6 +135,27 @@ wait_for_mount_ready() {
     return 1
 }
 
+wait_for_mysqlfs_ready() {
+    local mountpoint="$1"
+    local pid="$2"
+    local log_prefix="$3"
+
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+        dump_mysqlfs_logs "$log_prefix"
+        fail "mysqlfs did not stay alive long enough to initialize the filesystem"
+    fi
+
+    if ! wait_for_mount_ready "$mountpoint" "0755"; then
+        dump_mysqlfs_logs "$log_prefix"
+        fail "mysqlfs did not become ready on the mountpoint in time"
+    fi
+
+    if ! wait_for_query_result "1" "SELECT COUNT(*) FROM tree WHERE name='/' AND parent IS NULL;"; then
+        dump_mysqlfs_logs "$log_prefix"
+        fail "mysqlfs did not create the root directory entry in time"
+    fi
+}
+
 wait_for_query_result() {
     local expected="$1"
     local query="$2"
@@ -139,6 +187,22 @@ wait_for_file() {
     done
 
     return 1
+}
+
+assert_path_missing() {
+    local path="$1"
+    local message="$2"
+
+    if [ -e "$path" ]; then
+        fail "$message"
+    fi
+}
+
+truncate_file() {
+    local path="$1"
+    local size="$2"
+
+    perl -e 'truncate($ARGV[0], $ARGV[1]) or die "$ARGV[0]: $!\n";' "$path" "$size"
 }
 
 cleanup_mount() {
