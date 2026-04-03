@@ -1,171 +1,222 @@
-2012-07-25  Andrea Brancatelli <andrea@brancatelli.it>
-	* Data_blocks size is now cached in a specific
-	  column in order to speed up any inode update.i
-	  Thanks to Armin Wied for the idea!
-	* Added an index to the tree table to speed up
-	  file seeking operations.
-	  Thanks to Armin Wied for this idea too!
-	* Included here's a very rough version of a PHP API
-	  to interact with mysqlfs. Basically now you can
-	  fetch datas (or browse the filesystem) directly
-	  within mysql from PHP. Very cool.
-	* Truncating a file is now transaction safe
+MySQLfs ChangeLog
+=================
 
-2012-05-20  Andrea Brancatelli <andrea@brancatelli.it>
-	* First draft of a DB Update scripting system:
-	  just put the updates in sql/updates and it will
-	  be applied
+This file consolidates the historical notes that were previously split
+between `ChangeLog` and `NEWS`, and extends them with the work done after
+the 0.4.3 release notes up to the current 1.0.0 line.
 
-2012-04-11  Andrea Brancatelli <andrea@brancatelli.it>
-	* Changed the logic to update the file size. It's
-	  now done with a variable to be replication-safe.
 
-2012-04-08  Andrea Brancatelli <andrea@brancatelli.it>
-	* The FileSystem is now du-compatible when
-	  reporting file size
-	* Corrected a bug in command line parsing
-	* Fixed problem with -obig_writes
-	* Enabled support for -oallow_other to allow multiple
-	  users access to the same filesystem
-	* Enabled support for -odefault_permissions (that
-	  seems to be mandatory when using the FS under
-	  FreeBSD)
+Version 1.0.0 (2026-04-04)
+--------------------------
 
-2012-04-06  Andrea Brancatelli <andrea@brancatelli.it>
-	* The FileSystem now reports some pseudorealistic
-	  information about space usage and real informations
-	  about inode usage.
-	* Implemented the mysqlfs_create() to support new (2.6)
-	  fuse::create 
-	* Updated version to 0.4.1
+* Hardened several correctness-critical filesystem paths:
+  - rename target replacement is now handled transactionally inside
+    `query_rename()`
+  - write and truncate now hold an inode-level transactional lock
+  - size updates are kept inside the same write transaction
+  - path lookup SQL building in `query_inode_full()` is guarded against
+    oversized paths instead of overflowing internal buffers
+  - `readdir()` now propagates SQL failures back to FUSE instead of
+    silently reporting success
+  - `getattr()` reports block counts correctly for non-512-aligned sizes
+    and loads file size directly from inode metadata
+  - unlink no longer leaks pooled connections on multi-link paths
 
-2012-04-04  Andrea Brancatelli <andrea@brancatelli.it>
-        * Added support for big-writes
-        * Added support for FreeBSD build
-        * Increased support to FUSE API 2.6
-        * Switched for MyISAM to InnoDB
-        * Basic support for transactions
+* Improved startup and mount behavior:
+  - the bootstrap root directory is created with the mounting user's
+    ownership
+  - unknown native FUSE options are forwarded correctly to libfuse,
+    restoring support for debug, foreground, and single-threaded runs
 
-2008-04-10  Florian Wiessner <f.wiessner@smart-weblications.de>
-	* Updated pool.h
+* Modernized portability and build tooling:
+  - added Debian 9 build notes and library path guidance
+  - added a dedicated macOS build helper script
+  - cleaned up CMake support for current toolchains and platform library
+    discovery
+  - fixed modern compiler warnings in the C sources
+  - documented permission-enforcement expectations more clearly
 
-2008-04-10  Florian Wiessner <f.wiessner@smart-weblications.de>
-	* Added fsck support in query.c
-	* Added -ofsck=1 switch to mysqlfs, fsck is only done when 
-	  -ofsck=1 is set on commandline.
-	* Updated TODO File
+* Added a repeatable local test harness:
+  - `run-tests.sh` now recreates and initializes a clean test database
+  - `mysqlfs_setup` can be used non-interactively for local testing
+  - added shell-based end-to-end regression tests covering:
+    root bootstrap, write/read round-trips, rename, truncate, mkdir plus
+    move, unlink, in-place overwrite, rename over an existing target,
+    directory listings, symbolic links, and a 16 MiB checksum test
 
-2008-04-09  Michal Ludvig  <michal@logix.cz>
+* Improved database setup and migrations:
+  - fixed several SQL update issues
+  - fixed MySQL "commands out of sync" failures
+  - improved fsck-related fixes and follow-up SQL maintenance
+  - fixed SQL update handling for modern MySQL
+  - added migration `00000009.sql` to enable InnoDB compressed row format
+    on `inodes` and `data_blocks`
 
-	* Migrated from CVS to SVN
+* Improved query behavior and performance:
+  - optimized path and sequence lookup queries
+  - simplified joins where climbing through parents did not require a
+    `LEFT JOIN`
 
-2007-03-29  Michal Ludvig  <michal@logix.cz>
+* Clarified supported filesystem semantics:
+  - symbolic links are supported and covered by regression tests
+  - hard links are now explicitly reported as unsupported instead of
+    failing later with schema-driven I/O errors
 
-	* Update NEWS and configure.in to release 0.4.0-rc1
 
-2007-03-29  Michal Ludvig  <michal@logix.cz>
+Version rel_0.9.9 (2015-04-14)
+------------------------------
 
-	* Reworked data storage. Instead of one huge record 
-	  for each file in table "data" we now store the data 
-	  in 4kB chunks (a.k.a. "sectors" or "blocks"). That 
-	  speeds up especially updates to files a _lot_ :-)
-	  As a side effect it allows for storing "sparse" files.
-	  CAUTION: database schema has changed in this version!
+* Switched the project from autotools to CMake.
 
-2006-10-03  Michal Ludvig  <michal@logix.cz>
+* Improved build and packaging support:
+  - fixed CMake scripts
+  - improved `mysqlfs_update`
+  - made SQL update files easier to install and locate from shared paths
+  - resolved LibM lookup issues in the build system
 
-	* Updated version to 0.3.1
-	* Added schema.sql to the distribution tarball. Oops!
+* Improved portability and documentation:
+  - refreshed build and usage documentation
+  - cleaned up older FreeBSD-specific warnings once `big_writes`
+    behavior was confirmed
 
-2006-09-23  Michal Ludvig  <michal@logix.cz>
+* Fixed directory emptiness handling:
+  - added the missing empty-folder checks
+  - fixed the "directory not empty" validation logic
 
-	* Updated version to 0.3
-	* Updated auxiliary files (README, TODO, ...)
 
-2006-09-23  Michal Ludvig  <michal@logix.cz>
+Version 0.4.3
+-------------
 
-	* Create root directory on startup if it doesn't exist.
-	* Changed timestamp fields in 'inodes' table to 'int
-	  unsigned' to avoid conversion between MYSQL timestamp and 
-	  Unix timestamp in a number of queries.
-	* Updated schema.sql. Now with autocreating '/' it's enough 
-	  to use 'mysqldump -d' i.e. dump just the schema without
-	  data.
+* Fixed CHOWN compatibility with FreeBSD.
 
-2006-09-17  Michal Ludvig  <michal@logix.cz>
+* Added table prefix support across the project:
+  - C code
+  - PHP API
+  - documentation
 
-	* pool.c: Rewritten from scratch. It doesn't have a limit
-	  on open connections anymore and instead creates new ones
-	  on request. Returned connections are not immediately 
-	  closed, instead put into a LIFO-type stack and reused
-	  later. Maximum number of connections idling on the stack 
-	  can be set as well as the initial number of connections
-	  opened on start.
-	  This rewrite triggered search-and-replace changes
-	  in mysqlfs.c (no more MYSQL_CONN type). Instead I return
-	  the connection itself (MYSQL*) though typed as (void*) -  
-	  probably not the best choice. The intent was to
-	  prepare for support of other DBs. It works for now but 
-	  I'll likely rewrite or improve this later ;-) 
-	  
-2006-09-15  Michal Ludvig  <michal@logix.cz>
+* Improved the PHP API, including path handling fixes.
 
-	* Enable reconnect when mysql connection gone away.
+* Fixed issues in the SQL update flow.
 
-2006-09-13  Michal Ludvig  <michal@logix.cz>
+* General cleanup and packaging updates for the 0.4.3 release.
 
-	* Splitted table fs into a separate table for directory 
-	  tree and a table for inodes. This triggered radical 
-	  changes to most parts of the source. However now it's 
-	  possible to have hardlinks, delayed unlink and some other 
-	  sweeties difficult or impossible to implement with 
-	  the previous scheme.
-	* open() stores inode number in fi->fh and read(), write()
-	  release() and some other functions use that instead 
-	  of translating path name to inode every time.
-	* Updated schema.sql for the new DB layout. No transition
-	  tools from the previous schema are provided because I don't
-	  believe anyone has any valuable data in their FS ;-) If you
-	  do, tar them up, upgrade and untar back again.
-	* Started migrating the FS logic to mysqlfs.c. In the future
-	  query.c will only have query primitives and we'll perhaps 
-	  have query.c files for other DBs as well (Oracle,
-	  PostgreSQL, ...)
-	* Increased default connection pool to 25 conns.
-	* Added some plans to TODO list.
-	* Implemented link(), chown().
-	* Fixed truncate().
 
-2006-09-07  Michal Ludvig  <michal@logix.cz>
+Version 0.4.2 (2012-07-25)
+--------------------------
 
-	* Read default MySQL options from one of my.cnf files.
-	  Subsequently don't require the connect options
-	  on the command line.
+* Made inode size updates replication-safe by computing the value through
+  an intermediate variable.
 
-2006-09-06  Michal Ludvig  <michal@logix.cz>
+* Added the first database upgrade scripting support.
 
-	* Check for MySQL version both in configure.in and
-	  when actually connecting the server.
-	* Fixed a few minor omissions. Now it should run again
-	  even on other machines than my one ;-)
+* Cached `data_blocks` sizes in a dedicated column to speed up inode
+  updates.
+  Thanks to Armin Wied for the idea.
 
-2006-09-04  Michal Ludvig  <michal@logix.cz>
+* Added an index to the `tree` table to speed up file lookups.
+  Thanks to Armin Wied for this idea too.
 
-	* Fixed write() to actually do what a decent write() is
-	  supposed to do.
-	* Pulled 'data' column to a separate table.
-	* Implemented truncate(), symlink(), readlink()
-	* Implemented limited rename() only for regular files
-	* Added better logging infrastructure, converted
-	  all plain printf() calls to log_printf()
-	* Removed autogenerated files from CVS.
-	* Various cleanups and improvements on autoconfig front.
-	* Minor cleanups here and there.
+* Included the first rough PHP API to browse and fetch data directly from
+  mysqlfs-backed tables.
 
-2006-07-23  Tsukasa Hamano <code@cuspy.org>
+* Improved transaction safety, including transaction-safe truncate.
 
-	* Released 0.2
 
-2006-06-08  Tsukasa Hamano <code@cuspy.org>
+Version 0.4.1 (2012-04-08)
+--------------------------
 
-	* Released 0.1
+* Switched the database engine from MyISAM to InnoDB.
+
+* Added basic transaction support with rollback handling.
+
+* Upgraded to the FUSE 2.6 API and implemented the newer `create()`
+  operation.
+
+* Added support for `big_writes`.
+
+* Added FreeBSD support.
+
+* Added filesystem statistics reporting, including inode usage and
+  pseudo-realistic space reporting.
+
+* Made the filesystem report file sizes in a way that is compatible with
+  `du`.
+
+* Fixed command-line parsing issues.
+
+* Added support for `allow_other` and `default_permissions`.
+
+
+Version 0.4.0
+-------------
+
+* Reworked file storage to use 4 KiB blocks instead of one huge record per
+  file.
+  This greatly improved update performance and storage efficiency.
+
+* Added sparse file support as a consequence of block-based storage.
+
+* This release changed the database schema.
+
+
+Version 0.3.1 (2006-10-03)
+--------------------------
+
+* Added the missing `schema.sql` file to the distribution tarball.
+
+
+Version 0.3 (2006-09-23)
+------------------------
+
+* Reworked the database schema to separate:
+  - directory tree
+  - inodes
+  - file data
+
+* This new layout made delayed unlink and hard-link-aware inode accounting
+  possible.
+
+* Rewrote connection pooling to avoid exhausting database connections and
+  to reuse idle connections efficiently.
+
+* `open()` began caching the inode number in `fi->fh` so subsequent
+  operations no longer needed to resolve the pathname each time.
+
+* Implemented or completed a substantial part of the core filesystem API:
+  - better write behavior
+  - truncate
+  - symlink
+  - readlink
+  - link
+  - chown
+  - limited rename support for regular files
+
+* Added better logging infrastructure based on `log_printf()`.
+
+* Added automatic root directory creation on startup.
+
+* Changed inode timestamp storage to Unix-style integer fields.
+
+* Added support for reading MySQL defaults from `my.cnf`.
+
+* Added MySQL version checks and reconnect handling.
+
+* Requires MySQL 5.0 or newer.
+
+
+Version 0.2 (2006-07-23)
+------------------------
+
+* Improved performance through MySQL connection pooling.
+
+* Added `atime` and `mtime` updates.
+
+* Added `chmod()`.
+
+* Improved error handling.
+
+
+Version 0.1 (2006-06-08)
+------------------------
+
+* Initial release.

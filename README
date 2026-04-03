@@ -2,6 +2,9 @@
 
 MySQLfs is a FUSE filesystem driver which stores files in a MySQL database.
 
+See [docs/ChangeLog](/Users/abrancatelli/Git/mysqlfs/docs/ChangeLog) for a
+consolidated release history.
+
 ===> Requirements
 
   To use this package you need:
