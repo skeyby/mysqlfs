@@ -1,146 +1,186 @@
-                      mysqlfs - MySQL FileSystem
+# mysqlfs
 
 MySQLfs is a FUSE filesystem driver which stores files in a MySQL database.
 
-See [docs/ChangeLog](docs/ChangeLog) for a
-consolidated release history.
+See [docs/ChangeLog.md](docs/ChangeLog.md) for a consolidated release history.
 
-===> Requirements
+## Requirements
 
-  To use this package you need:
-  - mysql-client libraries 5.0 or later on the local machine
-  - A MySQL server 5.0 or later somewhere on the network (or on the local machine)
-  - fuse 2.6 or later
+To use this package you need:
 
-===> Building instruction
+- mysql-client libraries 5.0 or later on the local machine
+- a MySQL server 5.0 or later somewhere on the network, or on the local machine
+- FUSE 2.6 or later
 
-  To build the package you need:
-  - CMake
-  - fuse-devel libs
-  - mysql-devel libs
+## Building
 
-  On FreeBSD 12.x or later you can install requirements with.
-  #> pkg install mysql80-client cmake gmake fusefs-libs 
+To build the package you need:
 
-  And remember to kldload fusefs before starting MySQLfs
+- CMake
+- FUSE development libraries
+- MySQL development libraries
 
-  On Debian 9 you can install requirements with:
-  #> sudo apt install -y cmake g++ libfuse-dev libmariadbclient-dev-compat
+On FreeBSD 12.x or later:
 
-  On macOS with Homebrew and macFUSE:
-  #> brew install cmake pkgconf mysql@8.4
-  #> brew install --cask macfuse
-  #> ./build-macos.sh
+```sh
+pkg install mysql80-client cmake gmake fusefs-libs
+```
 
-  The macOS helper script auto-detects Homebrew MySQL and macFUSE paths
-  and performs an out-of-tree build in ./build-macos.
+Remember to load `fusefs` before starting MySQLfs:
 
-  Run the following commands:
-  #> cmake .
-  #> make
-  #> make install
+```sh
+kldload fusefs
+```
 
-  Instead of last command 'make install' you can use 'checkinstall' to build the DEB-package.
+On Debian 9:
 
-===> First installation / upgrading
+```sh
+sudo apt install -y cmake g++ libfuse-dev libmariadbclient-dev-compat
+```
 
-   NOTE: if you are upgrading skip directly to step #2
+On macOS with Homebrew and macFUSE:
 
-1. Create a database and a MySQL account
-   mysql> CREATE DATABASE mysqlfs;
-   mysql> GRANT ALL PRIVILEGES ON mysqlfs.* TO mysqlfs@"%" IDENTIFIED BY 'pass';
-   mysql> FLUSH PRIVILEGES;
+```sh
+brew install cmake pkgconf mysql@8.4
+brew install --cask macfuse
+./build-macos.sh
+```
 
-2. Execute mysqlfs_setup and answer to the questions about your db.
+The macOS helper script auto-detects Homebrew MySQL and macFUSE paths
+and performs an out-of-tree build in `./build-macos`.
 
-4. Mount the filesystem (please change the parameters <> accordingly)
-   $ mkdir /mnt/fs
-   $ mysqlfs -ohost=<host> -ouser=<user> -opassword=<pass> -odatabase=<mysqlfs> -odefault_permissions /mnt/fs
+Generic build flow:
 
-5. Instead of setting connection options on the command line
-   you may create a [mysqlfs] section in your ~/.my.cnf file and
-   set the parameters there.
+```sh
+cmake .
+make
+make install
+```
 
-6. Mount on boot: add into /etc/fstab the next line
-   mysqlfs /mnt/fs fuse host=<host>,user=<user>,password=<pass>,database=<mysqlfs>,allow_other,default_permissions,big_writes,x-systemd.automount 0 2
+Instead of `make install` you can use `checkinstall` to build a package.
 
+## First Installation And Upgrade
 
-===> Upgrading from 0.4.0 or lower versions
+If you are upgrading, skip directly to step 2.
 
-   To upgrade your existing installation unfortunately you have to make some changes
-   to the database.
+1. Create a database and a MySQL account:
 
-   The recomended solution to upgrade your system is to compile a a newMySQLfs and
-   create a NEW filesystem in a NEW database. Mount it alongside the old one and then
-   just copy datas from the old filesystem to the new one. THIS IS THE RECOMENDED
-   (AND PROBABILY THE ONLY CERTAIN) SOLUTION.
+```sql
+CREATE DATABASE mysqlfs;
+GRANT ALL PRIVILEGES ON mysqlfs.* TO mysqlfs@"%" IDENTIFIED BY 'pass';
+FLUSH PRIVILEGES;
+```
 
-   IN THE SQL DIR YOU CAN FIND A 0.4.0_to_0.4.1.sql FILE, BUT IT IS "INFORMATIVE"
-   ONLY - IT'S NOT MEANT TO BE RUN ON A RUNNING FILESYSTEM
+2. Execute `mysqlfs_setup` and answer the questions about your database.
 
-   The problem lies in the handling of "sparse files": increasing the blocksize
-   without proper remapping of the underlying database can cause improper results.
-   More specifically your files will probably get filled with zeroes. You probably
-   don't want that.
+3. Mount the filesystem, changing the parameters as needed:
 
-===> Running options
+```sh
+mkdir /mnt/fs
+mysqlfs -ohost=<host> -ouser=<user> -opassword=<pass> -odatabase=<mysqlfs> -odefault_permissions /mnt/fs
+```
 
-  -ohost=<hostname>
-    MySQL server host
+4. Instead of setting connection options on the command line, you may
+   create a `[mysqlfs]` section in your `~/.my.cnf` file and set the
+   parameters there.
 
-  -ouser=<username>
-    MySQL username
+5. To mount on boot, add a line like this to `/etc/fstab`:
 
-  -opassword=<password>
-    MySQL password
+```fstab
+mysqlfs /mnt/fs fuse host=<host>,user=<user>,password=<pass>,database=<mysqlfs>,allow_other,default_permissions,big_writes,x-systemd.automount 0 2
+```
 
-  -odatabase=<db>
-    MySQL database name
+## Upgrading From 0.4.0 Or Lower
 
-  -obig_writes
-    Enable big_writes (strongly suggested)
+To upgrade an existing installation, you unfortunately need to make
+database changes.
 
-  -oallow_other
-    Enable filesystem access to different users than the one who mounted it.
-    The corresponding option must be enabled in /etc/fuse.conf
+The recommended solution is to compile a new MySQLfs, create a new
+filesystem in a new database, mount it alongside the old one, and then
+copy the data from the old filesystem to the new one. This is the
+recommended, and probably the only certain, solution.
 
-  -odefault_permissions
-    Ask FUSE/kernel to enforce standard Unix permission checks based on
-    the uid/gid/mode metadata stored by mysqlfs.
+In the SQL directory you can find a `0.4.0_to_0.4.1.sql` file, but it is
+informative only and is not meant to be run on a live filesystem.
 
-    This option is strongly recommended.
+The problem lies in the handling of sparse files: increasing the block
+size without proper remapping of the underlying database can cause
+improper results. More specifically, files may be filled with zeroes.
 
-    If you use -oallow_other, you should also use -odefault_permissions.
-    Using -oallow_other without -odefault_permissions may allow operations
-    that mysqlfs does not block on its own.
+## Running Options
 
-===> Compatibility Matrix
+`-ohost=<hostname>`
 
-  During development mysqlfs is checked against:
+MySQL server host.
 
-  * FreeBSD 10
-  * Fedora Linux 15
-  * Debian Linux 6
-  * Debian Linux 7
-  * Debian Linux 9
+`-ouser=<username>`
 
-  * MySQL 5.1
-  * MySQL 5.5
-  * MySQL 5.6
-  * MariaDB 10.1
+MySQL username.
 
-  NOTE:
-  * FreeBSD 9 + FUSE-KMOD is NOT supported
+`-opassword=<password>`
 
-===> Known limitations
+MySQL password.
 
-  * Hard links are not supported.
-    mysqlfs supports symbolic links, but it does not expose POSIX hard link
-    semantics. Attempting to create a hard link will fail with an operation
-    not supported error.
+`-odatabase=<db>`
 
-===> Authors
+MySQL database name.
 
-Copyright (C) 2006 Tsukasa Hamano <code@cuspy.org>
-Copyright (C) 2006 Michal Ludvig <michal@logix.cz>
-Copyright (C) 2012-2020 Andrea Brancatelli <andrea@brancatelli.it>
+`-obig_writes`
+
+Enable `big_writes` (strongly suggested).
+
+`-oallow_other`
+
+Enable filesystem access for users other than the one who mounted it.
+The corresponding option must be enabled in `/etc/fuse.conf`.
+
+`-odefault_permissions`
+
+Ask FUSE or the kernel to enforce standard Unix permission checks based on
+the `uid`, `gid`, and `mode` metadata stored by mysqlfs.
+
+This option is strongly recommended.
+
+If you use `-oallow_other`, you should also use `-odefault_permissions`.
+Using `-oallow_other` without `-odefault_permissions` may allow
+operations that mysqlfs does not block on its own.
+
+## Compatibility Matrix
+
+During development mysqlfs has been checked against:
+
+- FreeBSD 10
+- Fedora Linux 15
+- Debian Linux 6
+- Debian Linux 7
+- Debian Linux 9
+- MySQL 5.1
+- MySQL 5.5
+- MySQL 5.6
+- MariaDB 10.1
+
+Note:
+
+- FreeBSD 9 with FUSE-KMOD is not supported
+
+## Development Notes
+
+Historical repository branch roles were:
+
+- `origin/DEV`: experimental development work
+- `origin/TEST`: staging or beta-testing work
+- `origin/PROD`: production-ready history
+
+For current open work and future ideas, see [docs/TODO.md](docs/TODO.md).
+
+## Known Limitations
+
+- Hard links are not supported. mysqlfs supports symbolic links, but it
+  does not expose POSIX hard-link semantics. Attempting to create a hard
+  link will fail with an operation not supported error.
+
+## Authors
+
+- Tsukasa Hamano <code@cuspy.org>
+- Michal Ludvig <michal@logix.cz> - http://www.logix.cz/michal
+- Andrea Brancatelli <andrea@brancatelli.it> - http://andrea.brancatelli.it/

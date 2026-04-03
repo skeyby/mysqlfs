@@ -1,6 +1,0 @@
-Those are the specs for the TAGS name in GIT:
-
-origin/DEV - experimental stuff, will mostly break and set computer on fire
-origin/TEST - hopefully stable stuff, beta testing phase
-origin/PROD - production read stuff.
-
