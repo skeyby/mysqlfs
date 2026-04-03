@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <unistd.h>
 #include <libgen.h>
 
 #include <fuse/fuse.h>
@@ -32,6 +33,26 @@
 #define INODE_CACHE_MAX 4096
 
 struct table_names *tables;
+
+static uid_t current_fs_uid(void)
+{
+    struct fuse_context *context = fuse_get_context();
+
+    if (context != NULL)
+        return context->uid;
+
+    return geteuid();
+}
+
+static gid_t current_fs_gid(void)
+{
+    struct fuse_context *context = fuse_get_context();
+
+    if (context != NULL)
+        return context->gid;
+
+    return getegid();
+}
 
 static inline int lock_inode(MYSQL *mysql, long inode)
 {
@@ -580,9 +601,9 @@ long query_mknod(MYSQL *mysql, const char *path, mode_t mode, dev_t rdev,
     snprintf(sql, SQL_MAX,
              "INSERT INTO %s (inode, mode, uid, gid, atime, ctime, mtime)"
              "VALUES(%ld, %d, %d, %d, UNIX_TIMESTAMP(NOW()), "
-	            "UNIX_TIMESTAMP(NOW()), UNIX_TIMESTAMP(NOW()))",
+             "UNIX_TIMESTAMP(NOW()), UNIX_TIMESTAMP(NOW()))",
              tables->inodes, new_inode_number, mode,
-	     fuse_get_context()->uid, fuse_get_context()->gid);
+             current_fs_uid(), current_fs_gid());
 
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
     ret = mysql_query(mysql, sql);
