@@ -84,8 +84,8 @@ Version rel_0.9.9 (2015-04-14)
   - fixed the "directory not empty" validation logic
 
 
-Version 0.4.3
--------------
+Version 0.4.3 (2014-01-19)
+--------------------------
 
 * Fixed CHOWN compatibility with FreeBSD.
 
