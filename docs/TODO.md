@@ -26,3 +26,14 @@
 
 - Add support for xattrs and ACLs.
   FUSE exposes methods for xattrs, but mysqlfs does not implement them yet.
+
+- Add explicit `fallocate()` support.
+  Sparse file semantics already work through normal read, write, and
+  truncate operations, but mysqlfs does not currently implement the
+  dedicated FUSE `fallocate` path.
+
+- Plan a migration to the `libfuse 3.x` interfaces.
+  This should be treated as an API-compatibility pass rather than just
+  adding new callbacks: existing operations such as `getattr()`,
+  `rename()`, `readdir()`, `truncate()`, and timestamp handling need to
+  be checked against the newer signatures and semantics.
