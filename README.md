@@ -24,6 +24,7 @@ On FreeBSD 12.x or later:
 
 ```sh
 pkg install mysql80-client cmake gmake fusefs-libs
+./build.sh
 ```
 
 Remember to load `fusefs` before starting MySQLfs:
@@ -32,10 +33,18 @@ Remember to load `fusefs` before starting MySQLfs:
 kldload fusefs
 ```
 
+If you want to mount mysqlfs as a regular user on FreeBSD, also enable
+user mounts:
+
+```sh
+sysctl vfs.usermount=1
+```
+
 On Debian 9:
 
 ```sh
 sudo apt install -y cmake g++ libfuse-dev libmariadbclient-dev-compat
+./build.sh
 ```
 
 On macOS with Homebrew and macFUSE:
@@ -49,12 +58,17 @@ brew install --cask macfuse
 The macOS helper script auto-detects Homebrew MySQL and macFUSE paths
 and performs an out-of-tree build in `./build-macos`.
 
+On Linux and BSD systems, `./build.sh` performs the same role with a
+default out-of-tree build in `./build`.
+
 Generic build flow:
 
 ```sh
-cmake .
-make
-make install
+mkdir build
+cd build
+cmake ..
+cmake --build .
+cmake --install .
 ```
 
 Instead of `make install` you can use `checkinstall` to build a package.
@@ -155,6 +169,7 @@ operations that mysqlfs does not block on its own.
 During development mysqlfs has been checked against:
 
 - FreeBSD 10
+- FreeBSD 15
 - Fedora Linux 15
 - Debian Linux 6
 - Debian Linux 7
