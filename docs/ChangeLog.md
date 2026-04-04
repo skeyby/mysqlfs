@@ -6,6 +6,28 @@ between `ChangeLog` and `NEWS`, and extends them with the work done after
 the 0.4.3 release notes up to the current 1.0.0 line.
 
 
+Version 1.0.2 (2026-04-04)
+--------------------------
+
+* Improved the cross-platform build helpers:
+  - introduced a shared `build.sh` flow for Linux and BSD systems
+  - refactored `build-macos.sh` into a thinner macOS-specific wrapper
+  - fixed library discovery for current FreeBSD and Debian layouts
+
+* Improved local test portability across supported systems:
+  - simplified `run-tests.sh` so it no longer manages MySQL users or
+    grants directly
+  - made the regression harness work cleanly on macOS, FreeBSD 15, and
+    Debian 13
+  - normalized mount readiness checks across Linux, BSD, and macOS
+
+* Refreshed the main documentation for current users:
+  - reorganized the README around setup, usage, and upgrade tasks
+  - documented the currently validated operating systems and database
+    versions
+  - clarified the current `libfuse 2.x` compatibility baseline
+
+
 Version 1.0.1 (2026-04-04)
 --------------------------
 
