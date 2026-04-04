@@ -14,8 +14,10 @@
   mysqlfs stores permission metadata, but it still relies mainly on
   `default_permissions` for enforcement.
 
-- Add path-to-inode and inode-to-stat caches.
-  - `getattr()` would benefit significantly.
+- Refine cache behavior and observability.
+  - The current TTL-based metadata and path caches are intentionally
+    simple and local to one mysqlfs process.
+  - Future work could expose cache statistics for debugging and tuning.
   - `query_inode_full()` should eventually support walking a path in chunks
     from an intermediate inode instead of always building one large SQL
     query from the root.
