@@ -655,19 +655,19 @@ void usage(){
     fprintf(stderr,
             "usage: mysqlfs [opts] <mountpoint>\n\n");
     fprintf(stderr,
-            "       mysqlfs [-osocket=/tmp/mysql.sock] [-obig_writes] [-oallow_other] [-odefault_permissions] [-oport=####] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
+            "       mysqlfs [-osocket=/tmp/mysql.sock] [-obig_writes] [-oallow_other] [-odefault_permissions] [-ocache_ttl=seconds] [-oport=####] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
             "-odatabase=database ./mountpoint\n");
     fprintf(stderr,
-            "       mysqlfs [-d] [-ologfile=filename] [-obig_writes] [-oallow_other] [-odefault_permissions] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
+            "       mysqlfs [-d] [-ologfile=filename] [-obig_writes] [-oallow_other] [-odefault_permissions] [-ocache_ttl=seconds] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
             "-odatabase=database ./mountpoint\n");
     fprintf(stderr,
-            "       mysqlfs [-mycnf_group=group_name] [-obig_writes] [-oallow_other] [-odefault_permissions] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
+            "       mysqlfs [-mycnf_group=group_name] [-obig_writes] [-oallow_other] [-odefault_permissions] [-ocache_ttl=seconds] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
             "-odatabase=database ./mountpoint\n");
     fprintf(stderr, "\n(mimick mysql options)\n");
     fprintf(stderr,
-            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [--table_prefix=prefix] --host=host --user=user --password=password --database=database ./mountpoint\n");
+            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [--cache_ttl=seconds] [--table_prefix=prefix] --host=host --user=user --password=password --database=database ./mountpoint\n");
     fprintf(stderr,
-            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [-tp=prefix] -h host -u user --password=password -D database ./mountpoint\n");
+            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [--cache_ttl=seconds] [-tp=prefix] -h host -u user --password=password -D database ./mountpoint\n");
 }
 
 /** macro to set a call value with a default -- defined yet? */
@@ -699,6 +699,8 @@ static struct fuse_opt mysqlfs_opts[] =
     MYSQLFS_OPT_KEY(  "host=%s",	host,	0),
     MYSQLFS_OPT_KEY("--host=%s",	host,	0),
     MYSQLFS_OPT_KEY( "-h %s",		host,	0),
+    MYSQLFS_OPT_KEY(  "cache_ttl=%u",	cache_ttl,	0),
+    MYSQLFS_OPT_KEY("--cache_ttl=%u",	cache_ttl,	0),
     MYSQLFS_OPT_KEY(  "logfile=%s",	logfile,	0),
     MYSQLFS_OPT_KEY("--logfile=%s",	logfile,	0),
     MYSQLFS_OPT_KEY(  "mycnf_group=%s",	mycnf_group,	0), /* Read defaults from specified group in my.cnf  -- Command line options still have precedence.  */
@@ -755,6 +757,7 @@ static int mysqlfs_opt_proc(void *data, const char *arg, int key, struct fuse_ar
             fprintf(stderr, "pool: %d initial connections\n", opt->init_conns);
             fprintf(stderr, "pool: %d idling connections\n", opt->max_idling_conns);
             fprintf(stderr, "logfile: file://%s\n", opt->logfile);
+            fprintf(stderr, "cache ttl: %u seconds\n", opt->cache_ttl);
             fprintf(stderr, "bg? %s (debug)\n", (opt->bg ? "yes" : "no"));
             fprintf(stderr, "table prefix: %s\n\n", opt->tableprefix);
 
@@ -829,6 +832,12 @@ int main(int argc, char *argv[])
         fprintf(stderr, "WARNING: allow_other is enabled without default_permissions.\n");
         fprintf(stderr, "WARNING: THIS CONFIGURATION MAY ALLOW OPERATIONS THAT MYSQLFS DOES NOT BLOCK ON ITS OWN.\n");
         fprintf(stderr, "WARNING: STRONGLY RECOMMENDED: enable -odefault_permissions when using -oallow_other.\n");
+    }
+
+    if (opt.cache_ttl > 0) {
+        fprintf(stderr, " * Metadata cache TTL: %u seconds\n", opt.cache_ttl);
+    } else {
+        fprintf(stderr, " * Metadata cache disabled\n");
     }
 
     if (pool_init(&opt) < 0) {

@@ -18,17 +18,18 @@ struct mysqlfs_opt {
     char *user;                 /**< MySQL user */
     char *passwd;               /**< MySQL password */
     char *db;                   /**< MySQL database name */
-    unsigned int port;		/**< MySQL port */
-    char *socket;		/**< MySQL socket */
-    unsigned int fsck;		/**< fsck boolean 1 => do fsck, 0 => don't.  Used in pool_check_mysql_setup() to call query_fsck()  */
-    char *mycnf_group;		/**< Group in my.cnf to read defaults from */
-    unsigned int init_conns;	/**< Number of DB connections to init on startup */
-    unsigned int max_idling_conns;	/**< Maximum number of idling DB connections */
-    char *logfile;		/**< filename to which local debug/log information will be written */
-    int bg;			/**< (used for autotest) whether a term-less execution should background */
+    unsigned int port;          /**< MySQL port */
+    char *socket;               /**< MySQL socket */
+    unsigned int fsck;          /**< fsck boolean 1 => do fsck, 0 => don't.  Used in pool_check_mysql_setup() to call query_fsck()  */
+    char *mycnf_group;          /**< Group in my.cnf to read defaults from */
+    unsigned int init_conns;    /**< Number of DB connections to init on startup */
+    unsigned int max_idling_conns; /**< Maximum number of idling DB connections */
+    char *logfile;              /**< filename to which local debug/log information will be written */
+    int bg;                     /**< (used for autotest) whether a term-less execution should background */
     char *tableprefix;          /**< the prefix of the tables if applicable */
     unsigned int allow_other;   /**< whether allow_other was requested */
     unsigned int default_permissions; /**< whether default_permissions was requested */
+    unsigned int cache_ttl;     /**< metadata cache TTL in seconds; 0 disables caching */
 };
 
 /** Initalize pool and preallocate connections */
