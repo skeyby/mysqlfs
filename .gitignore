@@ -2,3 +2,4 @@
 /build/
 /build-macos/
 /mysqlfs.log
+/startFS.sh

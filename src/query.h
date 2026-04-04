@@ -32,6 +32,8 @@ struct table_names {
     char *statistics;           /**< statistics table name */
 };
 
+extern struct table_names *tables;
+
 
 long query_inode(MYSQL *mysql, const char* path);
 int query_inode_full(MYSQL *mysql, const char* path, char *name, size_t name_len,

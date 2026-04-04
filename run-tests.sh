@@ -12,7 +12,42 @@ MYSQLFS_TEST_DB_PASS="${MYSQLFS_TEST_DB_PASS:-mysqlfs_test}"
 MYSQLFS_TEST_ROOT_USER="${MYSQLFS_TEST_ROOT_USER:-root}"
 MYSQLFS_TEST_ROOT_PASS="${MYSQLFS_TEST_ROOT_PASS:-}"
 MYSQLFS_TEST_SOCKET="${MYSQLFS_TEST_SOCKET:-}"
-MYSQLFS_TEST_BIN="${MYSQLFS_TEST_BIN:-$SCRIPT_DIR/build-macos/src/mysqlfs}"
+
+default_build_dir() {
+    case "$(uname -s)" in
+        Darwin)
+            printf '%s\n' "build-macos"
+            ;;
+        *)
+            printf '%s\n' "build"
+            ;;
+    esac
+}
+
+find_mysqlfs_test_binary() {
+    local candidate
+    local build_dir
+
+    if [ -n "${MYSQLFS_TEST_BIN:-}" ]; then
+        printf '%s\n' "$MYSQLFS_TEST_BIN"
+        return 0
+    fi
+
+    build_dir="${MYSQLFS_BUILD_DIR:-$(default_build_dir)}"
+
+    for candidate in \
+        "$SCRIPT_DIR/$build_dir/src/mysqlfs" \
+        "$SCRIPT_DIR/build-macos/src/mysqlfs" \
+        "$SCRIPT_DIR/build/src/mysqlfs"
+    do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
 
 find_mysql_socket() {
     local candidate
@@ -25,7 +60,8 @@ find_mysql_socket() {
     for candidate in \
         /tmp/mysql.sock \
         /private/tmp/mysql.sock \
-        /opt/homebrew/var/mysql/mysql.sock
+        /opt/homebrew/var/mysql/mysql.sock \
+        /var/run/mysql/mysql.sock
     do
         if [ -S "$candidate" ]; then
             printf '%s\n' "$candidate"
@@ -92,6 +128,11 @@ run_test() {
 
 main() {
     local test_script
+
+    if ! MYSQLFS_TEST_BIN="$(find_mysqlfs_test_binary)"; then
+        echo "error: mysqlfs test binary not found in the configured build directory" >&2
+        exit 1
+    fi
 
     if [ ! -x "$MYSQLFS_TEST_BIN" ]; then
         echo "error: mysqlfs test binary not found at $MYSQLFS_TEST_BIN" >&2

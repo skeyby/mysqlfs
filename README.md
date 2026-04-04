@@ -72,6 +72,11 @@ FLUSH PRIVILEGES;
 ```
 
 2. Execute `mysqlfs_setup` and answer the questions about your database.
+   On servers with binary logging enabled, the setup or upgrade process
+   may also require elevated privileges to create the triggers used by
+   the `statistics` table. In that case, either grant the MySQL account
+   enough privilege to create triggers on the target server, or enable
+   `log_bin_trust_function_creators` for the setup phase.
 
 3. Mount the filesystem, changing the parameters as needed:
 

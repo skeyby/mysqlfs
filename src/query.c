@@ -32,8 +32,6 @@
 #define SQL_MAX 10240
 #define INODE_CACHE_MAX 4096
 
-struct table_names *tables;
-
 static uid_t current_fs_uid(void)
 {
     struct fuse_context *context = fuse_get_context();
@@ -1101,6 +1099,7 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
     struct data_blocks_info info;
     unsigned long seq;
     unsigned int mysqlerrno;
+    intmax_t write_end;
     const char *ptr;
     char sql[SQL_MAX];
     int ret, commitret, ret_size = 0;
@@ -1117,10 +1116,10 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
         mysql_query(mysql, "ROLLBACK");
         return ret;
     }
-    
+
     /* Handle first block */
     ret = write_one_block(mysql, inode, info.seq_first, data,
-			  info.length_first, info.offset_first);
+                          info.length_first, info.offset_first);
     if (ret < 0) {
         mysql_query(mysql, "ROLLBACK");
         unlock_inode(mysql, inode);
@@ -1130,27 +1129,25 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
 
     /* Shortcut - if last block seq is the same as first block
      * seq simply go away as it's the same block */
-    if (info.seq_first != info.seq_last)
-    {
-     
+    if (info.seq_first != info.seq_last) {
         ptr = data + info.length_first;
 
         /* Handle all full-sized intermediate blocks */
         for (seq = info.seq_first + 1; seq < info.seq_last; seq++) {
-                ret = write_one_block(mysql, inode, seq, ptr, DATA_BLOCK_SIZE, 0);
-                if (ret < 0) {
-                    /* Better rollback... */
-                    commitret = mysql_query(mysql, "ROLLBACK");
-                    unlock_inode(mysql, inode);
-                    return ret;
-                }
-        	ptr += DATA_BLOCK_SIZE;
-        	ret_size += ret;
+            ret = write_one_block(mysql, inode, seq, ptr, DATA_BLOCK_SIZE, 0);
+            if (ret < 0) {
+                /* Better rollback... */
+                commitret = mysql_query(mysql, "ROLLBACK");
+                unlock_inode(mysql, inode);
+                return ret;
+            }
+            ptr += DATA_BLOCK_SIZE;
+            ret_size += ret;
         }
 
         /* Handle last block */
         ret = write_one_block(mysql, inode, info.seq_last, ptr,
-        			  info.length_last, 0);
+                              info.length_last, 0);
         if (ret < 0) {
             /* Better rollback... */
             commitret = mysql_query(mysql, "ROLLBACK");
@@ -1160,22 +1157,22 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
         ret_size += ret;
     }
 
-    /* Update file size.
+    /* Update the logical EOF, not the sum of allocated block sizes.
      *
-     * Keep the aggregate computation separate from the UPDATE so the writer
-     * materializes the final size first and then stores that value explicitly.
-     * This should interact better with replication, because replicas can apply
-     * a simple UPDATE with an already computed value instead of re-evaluating
-     * the aggregate query against their local state. It should also reduce the
-     * risk of non-deterministic updates.
+     * Sparse files can have holes, so the inode size must be the maximum of
+     * the current size and the end of this write. Keep the computation
+     * separate from the UPDATE so the writer materializes the final value
+     * first and then stores it explicitly.
      */
+    write_end = (intmax_t)offset + ret_size;
     snprintf(sql, SQL_MAX,
-             "SELECT SUM(datalength) INTO @iNodeSize FROM %s WHERE inode = %ld",
-             tables->data_blocks, inode);
+             "SELECT GREATEST(size, %" PRIdMAX ") INTO @iNodeSize "
+             "FROM %s WHERE inode = %ld",
+             write_end, tables->inodes, inode);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
     if (mysql_query(mysql, sql)) {
-	mysqlerrno = mysql_errno(mysql);
-	log_printf(LOG_ERROR, "mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
+        mysqlerrno = mysql_errno(mysql);
+        log_printf(LOG_ERROR, "mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
         mysql_query(mysql, "ROLLBACK");
         unlock_inode(mysql, inode);
         return -EIO;
@@ -1185,9 +1182,9 @@ int query_write(MYSQL *mysql, long inode, const char *data, size_t size,
              "UPDATE %s SET size = @iNodeSize WHERE inode = %ld",
              tables->inodes, inode);
     log_printf(LOG_D_SQL, "sql=%s\n", sql);
-    if(mysql_query(mysql, sql)) {
-	mysqlerrno = mysql_errno(mysql);
-	log_printf(LOG_ERROR, "mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
+    if (mysql_query(mysql, sql)) {
+        mysqlerrno = mysql_errno(mysql);
+        log_printf(LOG_ERROR, "mysql_error: %u %s\n", mysqlerrno, mysql_error(mysql));
         mysql_query(mysql, "ROLLBACK");
         unlock_inode(mysql, inode);
         return -EIO;
