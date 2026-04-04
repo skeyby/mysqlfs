@@ -4,7 +4,7 @@ project (MySQLfs)
 # The version number.
 set (MySQLfs_VERSION_MAJOR 1)
 set (MySQLfs_VERSION_MINOR 0)
-set (MySQLfs_VERSION_PATCH 3)
+set (MySQLfs_VERSION_PATCH 4)
 
 MESSAGE(STATUS "Compiling MySQLfs ${MySQLfs_VERSION_MAJOR}.${MySQLfs_VERSION_MINOR}.${MySQLfs_VERSION_PATCH} on ${CMAKE_SYSTEM}")
 

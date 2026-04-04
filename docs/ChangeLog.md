@@ -6,6 +6,22 @@ between `ChangeLog` and `NEWS`, and extends them with the work done after
 the 0.4.3 release notes up to the current 1.0.0 line.
 
 
+Version 1.0.4 (2026-04-04)
+--------------------------
+
+* Corrected local package versioning for FreeBSD builds:
+  - the FreeBSD package builder now derives the package version from the
+    checked-out source tree before falling back to git tags
+  - local `.pkg` builds no longer reuse stale tag versions when a newer
+    release has not yet been fetched to the build host
+
+* Refreshed release metadata across the project:
+  - aligned the runtime mysqlfs version banner and `--version` output
+    with the 1.0.4 release
+  - updated `mysqlfs_setup` to report the current release number
+  - updated the Debian package changelog to 1.0.4
+
+
 Version 1.0.3 (2026-04-04)
 --------------------------
 
