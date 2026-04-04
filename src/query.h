@@ -63,8 +63,6 @@ ssize_t query_size(MYSQL *mysql, long inode);
 ssize_t query_size_block(MYSQL *mysql, long inode, unsigned long seq);
 
 int query_inuse_inc(MYSQL *mysql, long inode, int increment);
-int query_set_deleted(MYSQL *mysql, long inode);
-int query_purge_deleted(MYSQL *mysql, long inode);
 
 int query_fsck(MYSQL *mysql);
 

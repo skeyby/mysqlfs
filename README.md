@@ -42,6 +42,25 @@ Note:
 
 - FreeBSD 9 with FUSE-KMOD is not supported
 
+## POSIX Differences
+
+mysqlfs aims to behave like a normal Unix filesystem where practical,
+but it does not currently match POSIX semantics in every edge case.
+
+Known differences include:
+
+- deleting an open file is not supported with normal Unix
+  "deleted-but-still-open" semantics
+- once the directory entry is removed, the underlying inode and data may
+  be purged immediately by the current schema design
+- applications that rely on keeping an already-unlinked file descriptor
+  alive until the last `close()` should not assume that behavior on
+  mysqlfs
+
+This is a long-standing behavior of the project, and it should be kept
+in mind when using mysqlfs for workloads that depend on temporary files
+or other unlink-while-open patterns.
+
 ## Usage
 
 ### First Installation
