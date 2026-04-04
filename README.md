@@ -85,6 +85,24 @@ GRANT ALL PRIVILEGES ON mysqlfs.* TO mysqlfs@"%" IDENTIFIED BY 'pass';
 FLUSH PRIVILEGES;
 ```
 
+For normal mysqlfs runtime, the MySQL account needs full privileges on
+the target mysqlfs database.
+
+For the local regression suite (`run-tests.sh`), the `mysqlfs_test`
+account should additionally be able to:
+
+- drop and recreate the `mysqlfs_test` database
+- create triggers during `mysqlfs_setup`
+
+In practice, the test account should have privileges equivalent to:
+
+```sql
+GRANT ALL PRIVILEGES ON mysqlfs_test.* TO 'mysqlfs_test'@'localhost';
+GRANT CREATE, DROP ON *.* TO 'mysqlfs_test'@'localhost';
+GRANT SUPER ON *.* TO 'mysqlfs_test'@'localhost';
+FLUSH PRIVILEGES;
+```
+
 2. Execute `mysqlfs_setup` and answer the questions about your database.
    On servers with binary logging enabled, the setup or upgrade process
    may also require elevated privileges to create the triggers used by

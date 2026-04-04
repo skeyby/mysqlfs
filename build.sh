@@ -21,6 +21,40 @@ find_cmake() {
     return 1
 }
 
+find_multiarch_triplet() {
+    local compiler
+    local triplet
+
+    for compiler in "${CC:-}" cc gcc clang; do
+        if [ -z "$compiler" ] || ! command -v "$compiler" >/dev/null 2>&1; then
+            continue
+        fi
+
+        triplet="$("$compiler" -print-multiarch 2>/dev/null || true)"
+        if [ -n "$triplet" ] && [ "$triplet" != "." ]; then
+            printf '%s\n' "$triplet"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+library_search_paths() {
+    local triplet
+
+    if triplet="$(find_multiarch_triplet)"; then
+        printf '%s\n' "/usr/lib/$triplet"
+        printf '%s\n' "/lib/$triplet"
+    fi
+
+    printf '%s\n' /usr/local/lib
+    printf '%s\n' /usr/lib
+    printf '%s\n' /usr/lib64
+    printf '%s\n' /lib
+    printf '%s\n' /lib64
+}
+
 first_existing_path() {
     local candidate
 
@@ -30,6 +64,22 @@ first_existing_path() {
             return 0
         fi
     done
+
+    return 1
+}
+
+find_library_in_paths() {
+    local library_name="$1"
+    local directory
+
+    while IFS= read -r directory; do
+        [ -n "$directory" ] || continue
+
+        if [ -e "$directory/$library_name" ]; then
+            printf '%s\n' "$directory/$library_name"
+            return 0
+        fi
+    done < <(library_search_paths)
 
     return 1
 }
@@ -128,13 +178,17 @@ find_mysql_library() {
         fi
     fi
 
+    if find_library_in_paths "libmysqlclient.so"; then
+        return 0
+    fi
+
+    if find_library_in_paths "libmysqlclient.a"; then
+        return 0
+    fi
+
     first_existing_path \
-        /usr/local/lib/libmysqlclient.so \
-        /usr/local/lib/libmysqlclient.a \
         /usr/local/lib/mysql/libmysqlclient.so \
-        /usr/local/lib/mysql/libmysqlclient.a \
-        /usr/lib/libmysqlclient.so \
-        /usr/lib/libmysqlclient.a
+        /usr/local/lib/mysql/libmysqlclient.a
 }
 
 find_fuse_include_dir() {
@@ -181,11 +235,11 @@ find_fuse_library() {
         fi
     fi
 
-    first_existing_path \
-        /usr/local/lib/libfuse.so \
-        /usr/local/lib/libfuse.a \
-        /usr/lib/libfuse.so \
-        /usr/lib/libfuse.a
+    if find_library_in_paths "libfuse.so"; then
+        return 0
+    fi
+
+    find_library_in_paths "libfuse.a"
 }
 
 find_libm_include_dir() {
@@ -205,14 +259,11 @@ find_libm_library() {
         return 0
     fi
 
-    first_existing_path \
-        /usr/lib/libm.so \
-        /usr/lib64/libm.so \
-        /lib/libm.so \
-        /lib64/libm.so \
-        /usr/local/lib/libm.so \
-        /usr/lib/libm.a \
-        /usr/local/lib/libm.a
+    if find_library_in_paths "libm.so"; then
+        return 0
+    fi
+
+    find_library_in_paths "libm.a"
 }
 
 if ! CMAKE_BIN="$(find_cmake)"; then
