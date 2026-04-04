@@ -49,6 +49,24 @@ extract_first_include_dir() {
     return 1
 }
 
+normalize_component_include_dir() {
+    local candidate="$1"
+    local component="$2"
+    local header="$3"
+
+    if [ -f "$candidate/$component/$header" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    if [ -f "$candidate/$header" ]; then
+        printf '%s\n' "$(dirname "$candidate")"
+        return 0
+    fi
+
+    return 1
+}
+
 extract_first_library_dir() {
     local token
 
@@ -66,6 +84,7 @@ extract_first_library_dir() {
 
 find_mysql_include_dir() {
     local mysql_includes
+    local include_dir
 
     if [ -n "${MYSQL_INCLUDE_DIR:-}" ]; then
         printf '%s\n' "$MYSQL_INCLUDE_DIR"
@@ -74,14 +93,17 @@ find_mysql_include_dir() {
 
     if command -v mysql_config >/dev/null 2>&1; then
         read -r -a mysql_includes <<<"$(mysql_config --include)"
-        if extract_first_include_dir "${mysql_includes[@]}"; then
-            return 0
+        if include_dir="$(extract_first_include_dir "${mysql_includes[@]}")"; then
+            if normalize_component_include_dir "$include_dir" "mysql" "mysql.h"; then
+                return 0
+            fi
         fi
     fi
 
-    first_existing_path \
+    include_dir="$(first_existing_path \
         /usr/local/include/mysql \
-        /usr/include/mysql
+        /usr/include/mysql)"
+    normalize_component_include_dir "$include_dir" "mysql" "mysql.h"
 }
 
 find_mysql_library() {
@@ -117,6 +139,7 @@ find_mysql_library() {
 
 find_fuse_include_dir() {
     local fuse_includes
+    local include_dir
 
     if [ -n "${FUSE_INCLUDE_DIRS:-}" ]; then
         printf '%s\n' "$FUSE_INCLUDE_DIRS"
@@ -125,14 +148,17 @@ find_fuse_include_dir() {
 
     if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists fuse; then
         read -r -a fuse_includes <<<"$(pkg-config --cflags-only-I fuse)"
-        if extract_first_include_dir "${fuse_includes[@]}"; then
-            return 0
+        if include_dir="$(extract_first_include_dir "${fuse_includes[@]}")"; then
+            if normalize_component_include_dir "$include_dir" "fuse" "fuse.h"; then
+                return 0
+            fi
         fi
     fi
 
-    first_existing_path \
+    include_dir="$(first_existing_path \
         /usr/local/include \
-        /usr/include
+        /usr/include)"
+    normalize_component_include_dir "$include_dir" "fuse" "fuse.h"
 }
 
 find_fuse_library() {
@@ -188,13 +214,6 @@ find_libm_library() {
         /usr/lib/libm.a \
         /usr/local/lib/libm.a
 }
-
-case "$(uname -s)" in
-    Darwin)
-        echo "error: use ./build-macos.sh on macOS" >&2
-        exit 1
-        ;;
-esac
 
 if ! CMAKE_BIN="$(find_cmake)"; then
     echo "error: cmake is required but was not found in PATH" >&2

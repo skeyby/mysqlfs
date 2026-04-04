@@ -4,9 +4,27 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE_DIR="$SCRIPT_DIR"
-BUILD_DIR="${MYSQLFS_BUILD_DIR:-$SOURCE_DIR/build-macos}"
 CMAKE_BIN="${CMAKE_BIN:-}"
 MACOS_SDK_PATH="${MACOS_SDK_PATH:-}"
+
+find_cmake() {
+    if [ -n "$CMAKE_BIN" ]; then
+        printf '%s\n' "$CMAKE_BIN"
+        return 0
+    fi
+
+    if command -v cmake >/dev/null 2>&1; then
+        command -v cmake
+        return 0
+    fi
+
+    if command -v brew >/dev/null 2>&1 && brew list --formula cmake >/dev/null 2>&1; then
+        printf '%s\n' "$(brew --prefix cmake)/bin/cmake"
+        return 0
+    fi
+
+    return 1
+}
 
 find_mysql_prefix() {
     local formula
@@ -43,11 +61,6 @@ find_mysql_include_dir() {
         return 0
     fi
 
-    if [ -d "$prefix/include/mysql" ]; then
-        printf '%s\n' "$prefix/include/mysql"
-        return 0
-    fi
-
     return 1
 }
 
@@ -78,6 +91,8 @@ find_mysql_library() {
 }
 
 find_fuse_include_dir() {
+    local candidate
+
     if [ -n "${FUSE_INCLUDE_DIRS:-}" ]; then
         printf '%s\n' "$FUSE_INCLUDE_DIRS"
         return 0
@@ -176,15 +191,7 @@ if ! command -v brew >/dev/null 2>&1; then
     exit 1
 fi
 
-if [ -z "$CMAKE_BIN" ]; then
-    if command -v cmake >/dev/null 2>&1; then
-        CMAKE_BIN="$(command -v cmake)"
-    elif brew list --formula cmake >/dev/null 2>&1; then
-        CMAKE_BIN="$(brew --prefix cmake)/bin/cmake"
-    fi
-fi
-
-if [ ! -x "$CMAKE_BIN" ]; then
+if ! CMAKE_BIN="$(find_cmake)"; then
     echo "error: cmake is required but was not found in PATH" >&2
     echo "hint: install it with 'brew install cmake'" >&2
     exit 1
@@ -220,34 +227,13 @@ if ! LibM_LIBRARY="$(find_libm_library)"; then
     exit 1
 fi
 
-mkdir -p "$BUILD_DIR"
+export MYSQLFS_BUILD_DIR="${MYSQLFS_BUILD_DIR:-$SOURCE_DIR/build-macos}"
+export CMAKE_BIN
+export MYSQL_INCLUDE_DIR
+export MYSQL_LIBRARY
+export FUSE_INCLUDE_DIRS
+export FUSE_LIBRARIES
+export LibM_INCLUDES
+export LibM_LIBRARY
 
-echo "Configuring mysqlfs for macOS"
-echo "  source:        $SOURCE_DIR"
-echo "  build:         $BUILD_DIR"
-echo "  cmake:         $CMAKE_BIN"
-echo "  mysql headers: $MYSQL_INCLUDE_DIR"
-echo "  mysql library: $MYSQL_LIBRARY"
-echo "  fuse headers:  $FUSE_INCLUDE_DIRS"
-echo "  fuse library:  $FUSE_LIBRARIES"
-echo "  libm headers:  $LibM_INCLUDES"
-echo "  libm library:  $LibM_LIBRARY"
-
-cmake_args=(
-    -S "$SOURCE_DIR"
-    -B "$BUILD_DIR"
-    -DMYSQL_INCLUDE_DIR="$MYSQL_INCLUDE_DIR"
-    -DMYSQL_LIBRARY="$MYSQL_LIBRARY"
-    -DFUSE_INCLUDE_DIRS="$FUSE_INCLUDE_DIRS"
-    -DFUSE_LIBRARIES="$FUSE_LIBRARIES"
-    -DLibM_INCLUDES="$LibM_INCLUDES"
-    -DLibM_LIBRARY="$LibM_LIBRARY"
-)
-
-if [ "$#" -gt 0 ]; then
-    cmake_args+=("$@")
-fi
-
-"$CMAKE_BIN" "${cmake_args[@]}"
-
-"$CMAKE_BIN" --build "$BUILD_DIR"
+exec "$SCRIPT_DIR/build.sh" "$@"
