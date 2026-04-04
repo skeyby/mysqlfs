@@ -243,6 +243,15 @@ the package on Debian, install the standard packaging tools and run:
 dpkg-buildpackage -us -uc
 ```
 
+A local FreeBSD packaging layout is available under `./pkg/freebsd`. To
+build a `.pkg` on FreeBSD, run:
+
+```sh
+./pkg/freebsd/build-pkg.sh
+```
+
+The generated package is written under the current build directory.
+
 Historical repository branch roles were:
 
 - `origin/DEV`: experimental development work

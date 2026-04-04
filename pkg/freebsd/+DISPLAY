@@ -1,0 +1,13 @@
+mysqlfs has been installed.
+
+To start using it:
+
+  1. Create a MySQL or MariaDB database and account for mysqlfs.
+  2. Run:
+       mysqlfs_setup
+  3. Mount the filesystem, for example:
+       mkdir -p /mnt/mysqlfs
+       mysqlfs -ohost=localhost -ouser=mysqlfs -opassword=secret -odatabase=mysqlfs -odefault_permissions /mnt/mysqlfs
+
+Full setup and usage notes:
+  less /usr/local/share/doc/mysqlfs/README.md

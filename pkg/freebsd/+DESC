@@ -1,0 +1,6 @@
+mysqlfs stores filesystem metadata and file contents inside a
+MySQL-compatible database and exposes them through a FUSE mount.
+
+This package includes the mysqlfs filesystem driver, the mysqlfs_setup
+helper used to initialize or upgrade the database schema, and the SQL
+update files required by that setup workflow.
