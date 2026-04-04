@@ -2,7 +2,7 @@
   mysqlfs - MySQL Filesystem
   Copyright (C) 2006 Tsukasa Hamano <code@cuspy.org>
   Copyright (C) 2006,2007 Michal Ludvig <michal@logix.cz>
-  Copyright (C) 2012-2020 Andrea Brancatelli <andrea@brancatelli.it>
+  Copyright (C) 2012-2026 Andrea Brancatelli <andrea@brancatelli.it>
   $Id$
 
   This program can be distributed under the terms of the GNU GPL.

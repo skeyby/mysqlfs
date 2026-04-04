@@ -1,0 +1,28 @@
+Source: mysqlfs
+Section: utils
+Priority: optional
+Maintainer: Andrea Brancatelli <andrea@brancatelli.it>
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake,
+ libfuse-dev,
+ libmariadb-dev-compat,
+ pkgconf
+Standards-Version: 4.7.0
+Homepage: https://github.com/skeyby/mysqlfs
+Rules-Requires-Root: no
+
+Package: mysqlfs
+Architecture: any
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
+ default-mysql-client | mariadb-client,
+ fuse3 | fuse
+Description: FUSE filesystem backed by MySQL or MariaDB
+ mysqlfs stores filesystem metadata and file contents inside a
+ MySQL-compatible database and exposes them through a FUSE mount.
+ .
+ It includes the mysqlfs filesystem driver, the mysqlfs_setup helper
+ used to initialize or upgrade the database schema, and the SQL update
+ files required by that setup workflow.

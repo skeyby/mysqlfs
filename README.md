@@ -236,6 +236,13 @@ by default. If you prefer to keep those privileges on a separate MySQL
 account, you can override the bootstrap credentials with
 `MYSQLFS_TEST_ADMIN_USER` and `MYSQLFS_TEST_ADMIN_PASS`.
 
+An initial Debian packaging layout is available in `./debian`. To build
+the package on Debian, install the standard packaging tools and run:
+
+```sh
+dpkg-buildpackage -us -uc
+```
+
 Historical repository branch roles were:
 
 - `origin/DEV`: experimental development work
