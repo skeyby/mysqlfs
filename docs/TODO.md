@@ -2,10 +2,6 @@
 
 - Verify whether timestamp updates (`ctime`, `atime`, `mtime`) are always consistent.
 
-- Handle deletion of files that are still in use more safely.
-  Deleting an open file can currently purge data blocks immediately, which
-  does not match normal Unix expectations for deleted-but-still-open files.
-
 - Improve connection-pool robustness.
   Avoid returning `-EMFILE` when no pooled connection is immediately available.
   Also remove the dependency on the deprecated MySQL

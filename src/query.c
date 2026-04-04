@@ -1487,16 +1487,6 @@ int query_rename(MYSQL *mysql, const char *from, const char *to)
         ret = query_rmdirentry(mysql, target_name, target_parent);
         if (ret < 0)
             goto rollback;
-
-        if (target_nlinks <= 1) {
-            ret = query_set_deleted(mysql, target_inode);
-            if (ret < 0)
-                goto rollback;
-
-            ret = query_purge_deleted(mysql, target_inode);
-            if (ret < 0)
-                goto rollback;
-        }
     } else if (ret != -ENOENT) {
         goto rollback;
     }
@@ -1576,70 +1566,9 @@ int query_inuse_inc(MYSQL *mysql, long inode, int increment)
 }
 
 /**
- * Purge inodes from files previously marked deleted (ie query_set_deleted() )
- * and are no longer in-use.  Called by mysqlfs_unlink() and mysqlfs_release()
- *
- * @return 0 on success; -EIO if the mysql_query() is non-zero (and the error is logged)
- * @param mysql handle to the database
- * @param inode inode of the file that is to be marked deleted 
- */
-int query_purge_deleted(MYSQL *mysql, long inode)
-{
-    int ret;
-    char sql[SQL_MAX];
-
-    snprintf(sql, SQL_MAX,
-	     "DELETE FROM %s WHERE inode=%ld AND inuse=0 AND deleted=1",
-             tables->inodes, inode);
-
-    log_printf(LOG_D_SQL, "sql=%s\n", sql);
-
-    ret = mysql_query(mysql, sql);
-    if(ret){
-        log_printf(LOG_ERROR, "Error: mysql_query()\n");
-        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
-        return -EIO;
-    }
-
-    return 0;
-}
-
-/**
- * Mark the inode deleted where the name of the tree column is NULL.  This
- * allows files that are still in use to be deleted without wiping out their
- * underlying data.
- *
- * @return 0 on success; -EIO if the mysql_query() is non-zero (and the error is logged)
- * @param mysql handle to the database
- * @param inode inode of the file that is to be marked deleted
- */
-int query_set_deleted(MYSQL *mysql, long inode)
-{
-    int ret;
-    char sql[SQL_MAX];
-
-    snprintf(sql, SQL_MAX,
-	     "UPDATE %s i LEFT JOIN %s t ON i.inode = t.inode SET i.deleted=1 "
-	     "WHERE i.inode = %ld AND t.name IS NULL",
-             tables->inodes, tables->tree,
-             inode);
-
-    log_printf(LOG_D_SQL, "sql=%s\n", sql);
-
-    ret = mysql_query(mysql, sql);
-    if(ret){
-        log_printf(LOG_ERROR, "Error: mysql_query()\n");
-        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
-        return -EIO;
-    }
-
-    return 0;
-}
-
-/**
  * Clean filesystem.  Only run in pool_check_mysql_setup() if mysqlfs_opt::fsck == 1
  *
- * -# delete inodes with deleted==1
+ * -# delete legacy inodes left behind with deleted==1
  * -# delete direntries without corresponding inode
  * -# set inuse=0 for all inodes
  * -# delete data without existing inode
@@ -1658,7 +1587,11 @@ int query_fsck(MYSQL *mysql)
     */
     printf("Starting fsck\n");
 
-    // 1. delete inodes with deleted==1
+    /* Stage 1 intentionally keeps one legacy cleanup:
+     * older mysqlfs versions could leave deleted=1 inodes behind.
+     * The flag is no longer part of the active delete lifecycle,
+     * but fsck still removes any stale rows that may remain in
+     * existing installations. */
     int ret;
 //    int ret2;
     int result;

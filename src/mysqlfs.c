@@ -714,34 +714,6 @@ static int mysqlfs_unlink(const char *path)
         goto err_out;
     }
 
-    /* Only the last unlink() must set deleted flag.
-     * This is a shortcut - query_set_deleted() wouldn't
-     * set the flag if there is still an existing direntry
-     * anyway. But we'll save some DB processing here. */
-    if (nlinks > 1) {
-        ret = 0;
-        goto out;
-    }
-
-    /* Due to the introduction of InnoDB referencial integrity
-     * (and cascading), this should be totaly useless,
-     * But let's keep it here for a while. */
-    /* Useless_Start... */
-
-    ret = query_set_deleted(dbconn, inode);
-    if (ret < 0) {
-        log_printf(LOG_ERROR, "Error: query_set_deleted()\n");
-        goto err_out;
-    }
-
-    ret = query_purge_deleted(dbconn, inode);
-    if (ret < 0) {
-        log_printf(LOG_ERROR, "Error: query_purge_deleted()\n");
-        goto err_out;
-    }
-
-    /* ...Useless_End */
-
     ret = 0;
 
 out:
@@ -952,12 +924,6 @@ static int mysqlfs_release(const char *path, struct fuse_file_info *fi)
       return -EMFILE;
 
     ret = query_inuse_inc(dbconn, fi->fh, -1);
-    if (ret < 0) {
-        pool_put(dbconn);
-        return ret;
-    }
-
-    ret = query_purge_deleted(dbconn, fi->fh);
     if (ret < 0) {
         pool_put(dbconn);
         return ret;
