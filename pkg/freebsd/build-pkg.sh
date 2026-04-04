@@ -17,6 +17,7 @@ PKG_WWW=${MYSQLFS_PKG_WWW:-https://github.com/skeyby/mysqlfs}
 STAGE_DIR="$BUILD_DIR/freebsd-pkgroot"
 METADATA_DIR="$BUILD_DIR/freebsd-metadata"
 OUTPUT_DIR="$BUILD_DIR/freebsd-dist"
+PLIST_FILE="$BUILD_DIR/freebsd-plist"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -49,6 +50,19 @@ pkg_dep_version() {
     fi
 }
 
+pkg_dep_from_file() {
+    local file_path="$1"
+    local package_ref
+
+    package_ref=$(pkg which -q "$file_path" 2>/dev/null || true)
+    if [ -z "$package_ref" ]; then
+        echo "error: unable to determine which FreeBSD package owns $file_path" >&2
+        exit 1
+    fi
+
+    pkg query '%n|%o|%v' "$package_ref"
+}
+
 prepare_build() {
     require_command cmake
     require_command pkg
@@ -63,6 +77,7 @@ prepare_build() {
 
 stage_files() {
     rm -rf "$STAGE_DIR" "$METADATA_DIR" "$OUTPUT_DIR"
+    rm -f "$PLIST_FILE"
     mkdir -p "$STAGE_DIR" "$METADATA_DIR" "$OUTPUT_DIR"
 
     DESTDIR="$STAGE_DIR" cmake --install "$BUILD_DIR" --prefix "$PREFIX"
@@ -71,16 +86,28 @@ stage_files() {
     cp "$REPO_ROOT/README.md" "$STAGE_DIR$PREFIX/share/doc/mysqlfs/README.md"
     cp "$REPO_ROOT/docs/ChangeLog.md" "$STAGE_DIR$PREFIX/share/doc/mysqlfs/ChangeLog.md"
     cp "$REPO_ROOT/docs/COPYING" "$STAGE_DIR$PREFIX/share/doc/mysqlfs/COPYING"
+
+    (
+        cd "$STAGE_DIR$PREFIX"
+        find . -type f | sed 's#^\./##' | sort
+    ) >"$PLIST_FILE"
 }
 
 write_metadata() {
     local version
     local fuse_version
-    local mysql_client_version
+    local mysql_dep_name
+    local mysql_dep_origin
+    local mysql_dep_version
+    local mysql_dep_info
 
     version=$(detect_version)
     fuse_version=$(pkg_dep_version fusefs-libs)
-    mysql_client_version=$(pkg_dep_version mysql80-client)
+    mysql_dep_info=$(pkg_dep_from_file /usr/local/bin/mysql)
+    mysql_dep_name=${mysql_dep_info%%|*}
+    mysql_dep_info=${mysql_dep_info#*|}
+    mysql_dep_origin=${mysql_dep_info%%|*}
+    mysql_dep_version=${mysql_dep_info#*|}
 
     cp "$SCRIPT_DIR/+DESC" "$METADATA_DIR/+DESC"
     cp "$SCRIPT_DIR/+DISPLAY" "$METADATA_DIR/+DISPLAY"
@@ -99,13 +126,13 @@ EOD
 licenses: [ "GPLv2" ]
 deps: {
   fusefs-libs: { origin: "filesystems/fusefs-libs", version: "${fuse_version}" },
-  mysql80-client: { origin: "databases/mysql80-client", version: "${mysql_client_version}" }
+  ${mysql_dep_name}: { origin: "${mysql_dep_origin}", version: "${mysql_dep_version}" }
 }
 EOF
 }
 
 create_package() {
-    pkg create -r "$STAGE_DIR" -m "$METADATA_DIR" -o "$OUTPUT_DIR"
+    pkg create -r "$STAGE_DIR" -m "$METADATA_DIR" -p "$PLIST_FILE" -o "$OUTPUT_DIR"
     echo
     echo "Package created under:"
     echo "  $OUTPUT_DIR"
