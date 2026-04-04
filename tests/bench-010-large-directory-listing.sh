@@ -8,9 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FILE_COUNT="${MYSQLFS_BENCH_FILE_COUNT:-15000}"
 BENCH_DIR_NAME="${MYSQLFS_BENCH_DIR_NAME:-benchdir}"
 RESULTS_FILE="${MYSQLFS_BENCH_RESULTS_FILE:-}"
+READ_COMMAND="${MYSQLFS_BENCH_READ_COMMAND:-ls -l >/dev/null}"
+BENCH_PHASE="${MYSQLFS_BENCH_PHASE:-full}"
 BENCH_MOUNTPOINT=""
 BENCH_MYSQLFS_PID=""
 BENCH_SETUP_LOG=""
+BENCH_SAVED_NOAPPLEDOUBLE="0"
 
 run_timed_shell() {
     local command="$1"
@@ -53,34 +56,69 @@ record_result() {
     fi
 }
 
+restart_mysqlfs() {
+    local mountpoint="$1"
+    local log_prefix="$2"
+
+    cleanup_mount "$mountpoint" "${BENCH_MYSQLFS_PID:-}"
+    BENCH_MYSQLFS_PID="$(start_mysqlfs_test "$mountpoint" "$log_prefix")"
+    wait_for_mysqlfs_ready "$mountpoint" "$BENCH_MYSQLFS_PID" "$log_prefix"
+}
+
 main() {
     local repo_root=""
     local bench_dir=""
-    local log_prefix="mysqlfs-bench-large-directory"
+    local setup_log_prefix="mysqlfs-bench-large-directory-setup"
+    local read_log_prefix="mysqlfs-bench-large-directory-read"
     local seconds=""
-
     repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
     init_mysqlfs_test_env "$repo_root"
     init_mysql_admin_args
+    BENCH_SAVED_NOAPPLEDOUBLE="${MYSQLFS_TEST_MACOS_NOAPPLEDOUBLE:-0}"
+    MYSQLFS_TEST_MACOS_NOAPPLEDOUBLE=1
     BENCH_SETUP_LOG="$(mktemp "$(default_mount_root)/mysqlfs-bench-setup.XXXXXX.log")"
-    if ! bootstrap_mysqlfs_test_database "$repo_root" >"$BENCH_SETUP_LOG" 2>&1; then
-        cat "$BENCH_SETUP_LOG" >&2
-        fail "unable to prepare the benchmark database"
-    fi
-
     BENCH_MOUNTPOINT="$(make_mountpoint "mysqlfs-bench-large-directory")"
-    trap 'cleanup_mount "$BENCH_MOUNTPOINT" "$BENCH_MYSQLFS_PID"; rm -f "$BENCH_SETUP_LOG"' EXIT
+    trap 'MYSQLFS_TEST_MACOS_NOAPPLEDOUBLE="$BENCH_SAVED_NOAPPLEDOUBLE"; cleanup_mount "$BENCH_MOUNTPOINT" "$BENCH_MYSQLFS_PID"; rm -f "$BENCH_SETUP_LOG"' EXIT
 
-    BENCH_MYSQLFS_PID="$(start_mysqlfs_test "$BENCH_MOUNTPOINT" "$log_prefix")"
-    wait_for_mysqlfs_ready "$BENCH_MOUNTPOINT" "$BENCH_MYSQLFS_PID" "$log_prefix"
+    case "$BENCH_PHASE" in
+        full|setup)
+            if ! bootstrap_mysqlfs_test_database "$repo_root" >"$BENCH_SETUP_LOG" 2>&1; then
+                cat "$BENCH_SETUP_LOG" >&2
+                fail "unable to prepare the benchmark database"
+            fi
+
+            BENCH_MYSQLFS_PID="$(start_mysqlfs_test "$BENCH_MOUNTPOINT" "$setup_log_prefix")"
+            wait_for_mysqlfs_ready "$BENCH_MOUNTPOINT" "$BENCH_MYSQLFS_PID" "$setup_log_prefix"
+
+            bench_dir="$BENCH_MOUNTPOINT/$BENCH_DIR_NAME"
+            mkdir "$bench_dir"
+            create_benchmark_files "$bench_dir" "$FILE_COUNT"
+
+            if [ "$BENCH_PHASE" = "setup" ]; then
+                echo "Benchmark setup completed."
+                echo "files:        $FILE_COUNT"
+                echo "path:         $bench_dir"
+                return 0
+            fi
+
+            restart_mysqlfs "$BENCH_MOUNTPOINT" "$read_log_prefix"
+            ;;
+        read)
+            BENCH_MYSQLFS_PID="$(start_mysqlfs_test "$BENCH_MOUNTPOINT" "$read_log_prefix")"
+            wait_for_mysqlfs_ready "$BENCH_MOUNTPOINT" "$BENCH_MYSQLFS_PID" "$read_log_prefix"
+            ;;
+        *)
+            fail "unknown BENCH_PHASE '$BENCH_PHASE' (expected: full, setup, read)"
+            ;;
+    esac
 
     bench_dir="$BENCH_MOUNTPOINT/$BENCH_DIR_NAME"
-    mkdir "$bench_dir"
-    create_benchmark_files "$bench_dir" "$FILE_COUNT"
 
-    echo "Benchmark: large-directory-listing"
-    echo "files:     $FILE_COUNT"
-    echo "path:      $bench_dir"
+    echo "Benchmark: large-directory-listing (two-step)"
+    echo "phase:        $BENCH_PHASE"
+    echo "files:        $FILE_COUNT"
+    echo "path:         $bench_dir"
+    echo "read command: $READ_COMMAND"
     echo
 
     seconds="$(run_timed_shell "cd '$bench_dir'")"
@@ -89,11 +127,11 @@ main() {
     seconds="$(run_timed_shell "cd '$bench_dir' && ls >/dev/null")"
     record_result "cd+ls" "$seconds"
 
-    seconds="$(run_timed_shell "cd '$bench_dir' && ls -l >/dev/null")"
-    record_result "cd+ls -l #1" "$seconds"
+    seconds="$(run_timed_shell "cd '$bench_dir' && $READ_COMMAND")"
+    record_result "read #1" "$seconds"
 
-    seconds="$(run_timed_shell "cd '$bench_dir' && ls -l >/dev/null")"
-    record_result "cd+ls -l #2" "$seconds"
+    seconds="$(run_timed_shell "cd '$bench_dir' && $READ_COMMAND")"
+    record_result "read #2" "$seconds"
 }
 
 main "$@"

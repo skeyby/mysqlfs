@@ -176,8 +176,14 @@ start_mysqlfs_test() {
         "-odatabase=$MYSQLFS_TEST_DB_NAME"
         "-ouser=$MYSQLFS_TEST_DB_USER"
         "-opassword=$MYSQLFS_TEST_DB_PASS"
-        "$mountpoint"
     )
+
+    if [ "${MYSQLFS_TEST_MACOS_NOAPPLEDOUBLE:-0}" = "1" ] &&
+       [ "$(uname -s)" = "Darwin" ]; then
+        mysqlfs_args+=("-onoappledouble")
+    fi
+
+    mysqlfs_args+=("$mountpoint")
 
     "$MYSQLFS_TEST_BIN" \
         "${mysqlfs_args[@]}" \
