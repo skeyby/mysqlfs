@@ -105,7 +105,7 @@ stat_mode() {
     fi
 
     if stat -c '%a' "$path" >/dev/null 2>&1; then
-        stat -c '%a' "$path"
+        printf '0%s\n' "$(stat -c '%a' "$path")"
         return 0
     fi
 
