@@ -75,6 +75,7 @@ init_mysqlfs_test_env() {
     MYSQLFS_TEST_DB_USER="${MYSQLFS_TEST_DB_USER:-mysqlfs_test}"
     MYSQLFS_TEST_DB_PASS="${MYSQLFS_TEST_DB_PASS:-mysqlfs_test}"
     MYSQLFS_TEST_SOCKET="${MYSQLFS_TEST_SOCKET:-}"
+    MYSQLFS_TEST_CACHE_TTL="${MYSQLFS_TEST_CACHE_TTL:-0}"
     MYSQLFS_TEST_ADMIN_USER="${MYSQLFS_TEST_ADMIN_USER:-$MYSQLFS_TEST_DB_USER}"
     MYSQLFS_TEST_ADMIN_PASS="${MYSQLFS_TEST_ADMIN_PASS:-$MYSQLFS_TEST_DB_PASS}"
 
@@ -171,6 +172,7 @@ start_mysqlfs_test() {
         -s
         -obig_writes
         -odefault_permissions
+        "-ocache_ttl=$MYSQLFS_TEST_CACHE_TTL"
         "-odatabase=$MYSQLFS_TEST_DB_NAME"
         "-ouser=$MYSQLFS_TEST_DB_USER"
         "-opassword=$MYSQLFS_TEST_DB_PASS"

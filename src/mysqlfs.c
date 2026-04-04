@@ -24,6 +24,7 @@
 
 #include <pthread.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #ifdef DEBUG
 #include <mcheck.h>
@@ -35,6 +36,254 @@
 #include "pool.h"
 #include "log.h"
 
+#define METADATA_CACHE_BUCKET_COUNT 256
+
+struct metadata_cache_entry {
+    char *path;
+    struct stat stbuf;
+    time_t expires_at;
+    struct metadata_cache_entry *next;
+};
+
+struct metadata_cache {
+    struct metadata_cache_entry *buckets[METADATA_CACHE_BUCKET_COUNT];
+    pthread_mutex_t mutex;
+    unsigned int ttl;
+    size_t count;
+};
+
+struct readdir_cache_fill_ctx {
+    const char *dir_path;
+    void *buf;
+    fuse_fill_dir_t filler;
+};
+
+static struct metadata_cache metadata_cache;
+
+static int metadata_cache_enabled(const struct metadata_cache *cache)
+{
+    return cache->ttl > 0;
+}
+
+static unsigned long metadata_cache_hash_path(const char *path)
+{
+    unsigned long hash = 5381;
+    unsigned char ch;
+
+    while ((ch = (unsigned char)*path++) != '\0') {
+        hash = ((hash << 5) + hash) + ch;
+    }
+
+    return hash % METADATA_CACHE_BUCKET_COUNT;
+}
+
+static void metadata_cache_init(struct metadata_cache *cache, unsigned int ttl)
+{
+    memset(cache->buckets, 0, sizeof(cache->buckets));
+    pthread_mutex_init(&cache->mutex, NULL);
+    cache->ttl = ttl;
+    cache->count = 0;
+}
+
+static void metadata_cache_destroy(struct metadata_cache *cache)
+{
+    struct metadata_cache_entry *entry;
+    struct metadata_cache_entry *next;
+    size_t bucket;
+
+    pthread_mutex_lock(&cache->mutex);
+
+    for (bucket = 0; bucket < METADATA_CACHE_BUCKET_COUNT; bucket++) {
+        entry = cache->buckets[bucket];
+
+        while (entry != NULL) {
+            next = entry->next;
+            free(entry->path);
+            free(entry);
+            entry = next;
+        }
+
+        cache->buckets[bucket] = NULL;
+    }
+
+    cache->count = 0;
+
+    pthread_mutex_unlock(&cache->mutex);
+    pthread_mutex_destroy(&cache->mutex);
+}
+
+static int metadata_cache_get(struct metadata_cache *cache, const char *path, struct stat *stbuf)
+{
+    struct metadata_cache_entry *entry;
+    struct metadata_cache_entry *prev;
+    unsigned long bucket;
+    time_t now;
+
+    if (!metadata_cache_enabled(cache)) {
+        return 0;
+    }
+
+    bucket = metadata_cache_hash_path(path);
+    now = time(NULL);
+
+    pthread_mutex_lock(&cache->mutex);
+
+    prev = NULL;
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            if (entry->expires_at <= now) {
+                if (prev != NULL) {
+                    prev->next = entry->next;
+                } else {
+                    cache->buckets[bucket] = entry->next;
+                }
+
+                cache->count--;
+                free(entry->path);
+                free(entry);
+                pthread_mutex_unlock(&cache->mutex);
+                return 0;
+            }
+
+            memcpy(stbuf, &entry->stbuf, sizeof(struct stat));
+            pthread_mutex_unlock(&cache->mutex);
+            return 1;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    pthread_mutex_unlock(&cache->mutex);
+    return 0;
+}
+
+static void metadata_cache_set(struct metadata_cache *cache, const char *path, const struct stat *stbuf)
+{
+    struct metadata_cache_entry *entry;
+    unsigned long bucket;
+    time_t expires_at;
+
+    if (!metadata_cache_enabled(cache)) {
+        return;
+    }
+
+    bucket = metadata_cache_hash_path(path);
+    expires_at = time(NULL) + cache->ttl;
+
+    pthread_mutex_lock(&cache->mutex);
+
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            memcpy(&entry->stbuf, stbuf, sizeof(struct stat));
+            entry->expires_at = expires_at;
+            pthread_mutex_unlock(&cache->mutex);
+            return;
+        }
+
+        entry = entry->next;
+    }
+
+    entry = calloc(1, sizeof(struct metadata_cache_entry));
+    if (entry == NULL) {
+        pthread_mutex_unlock(&cache->mutex);
+        return;
+    }
+
+    entry->path = strdup(path);
+    if (entry->path == NULL) {
+        free(entry);
+        pthread_mutex_unlock(&cache->mutex);
+        return;
+    }
+
+    memcpy(&entry->stbuf, stbuf, sizeof(struct stat));
+    entry->expires_at = expires_at;
+    entry->next = cache->buckets[bucket];
+    cache->buckets[bucket] = entry;
+    cache->count++;
+
+    pthread_mutex_unlock(&cache->mutex);
+}
+
+static void metadata_cache_invalidate_path(struct metadata_cache *cache, const char *path)
+{
+    struct metadata_cache_entry *entry;
+    struct metadata_cache_entry *prev;
+    unsigned long bucket;
+
+    if (!metadata_cache_enabled(cache)) {
+        return;
+    }
+
+    bucket = metadata_cache_hash_path(path);
+
+    pthread_mutex_lock(&cache->mutex);
+
+    prev = NULL;
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            if (prev != NULL) {
+                prev->next = entry->next;
+            } else {
+                cache->buckets[bucket] = entry->next;
+            }
+
+            cache->count--;
+            free(entry->path);
+            free(entry);
+            break;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    pthread_mutex_unlock(&cache->mutex);
+}
+
+static void metadata_cache_invalidate_parent(struct metadata_cache *cache, const char *path)
+{
+    char tmppath[PATH_MAX];
+    char *dir_path;
+
+    if (!metadata_cache_enabled(cache)) {
+        return;
+    }
+
+    if (!(strlen(path) < PATH_MAX)) {
+        return;
+    }
+
+    strcpy(tmppath, path);
+    dir_path = dirname(tmppath);
+    metadata_cache_invalidate_path(cache, dir_path);
+}
+
+static int mysqlfs_readdir_cache_fill(void *ctx, const char *name, const struct stat *stbuf)
+{
+    struct readdir_cache_fill_ctx *fill_ctx = ctx;
+    char child_path[PATH_MAX];
+
+    fill_ctx->filler(fill_ctx->buf, name, NULL, 0);
+
+    if (strcmp(fill_ctx->dir_path, "/") == 0) {
+        snprintf(child_path, sizeof(child_path), "/%s", name);
+    } else {
+        snprintf(child_path, sizeof(child_path), "%s/%s", fill_ctx->dir_path, name);
+    }
+
+    metadata_cache_set(&metadata_cache, child_path, stbuf);
+
+    return 0;
+}
+
 static int mysqlfs_getattr(const char *path, struct stat *stbuf)
 {
     int ret;
@@ -45,19 +294,27 @@ static int mysqlfs_getattr(const char *path, struct stat *stbuf)
 
     memset(stbuf, 0, sizeof(struct stat));
 
-    if ((dbconn = pool_get()) == NULL)
+    if (metadata_cache_get(&metadata_cache, path, stbuf)) {
+        stbuf->st_blocks = (blkcnt_t)((stbuf->st_size + 511) / 512);
+        return 0;
+    }
+
+    if ((dbconn = pool_get()) == NULL) {
         return -EMFILE;
+    }
 
     ret = query_getattr(dbconn, path, stbuf);
 
     if (ret) {
-        if (ret != -ENOENT)
+        if (ret != -ENOENT) {
             log_printf(LOG_ERROR, "Error: query_getattr()\n");
+        }
         pool_put(dbconn);
         return ret;
     }
 
     stbuf->st_blocks = (blkcnt_t)((stbuf->st_size + 511) / 512);
+    metadata_cache_set(&metadata_cache, path, stbuf);
 
     pool_put(dbconn);
 
@@ -72,6 +329,7 @@ static int mysqlfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     int ret;
     MYSQL *dbconn;
     long inode;
+    struct readdir_cache_fill_ctx fill_ctx;
 
     log_printf(LOG_D_CALL, "mysqlfs_readdir(\"%s\")\n", path);
 
@@ -85,11 +343,19 @@ static int mysqlfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         return inode;
     }
 
-    
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
-    ret = query_readdir(dbconn, inode, buf, filler);
+    if (metadata_cache_enabled(&metadata_cache)) {
+        fill_ctx.dir_path = path;
+        fill_ctx.buf = buf;
+        fill_ctx.filler = filler;
+        ret = query_readdir_children_attrs(dbconn, inode, &fill_ctx,
+                                           mysqlfs_readdir_cache_fill);
+    } else {
+        ret = query_readdir(dbconn, inode, buf, filler);
+    }
+
     pool_put(dbconn);
 
     if (ret < 0)
@@ -140,6 +406,8 @@ static int mysqlfs_mknod(const char *path, mode_t mode, dev_t rdev)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
+    metadata_cache_invalidate_parent(&metadata_cache, path);
     return 0;
 }
 
@@ -178,6 +446,8 @@ static int mysqlfs_mkdir(const char *path, mode_t mode){
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
+    metadata_cache_invalidate_parent(&metadata_cache, path);
     return 0;
 }
 
@@ -248,6 +518,8 @@ static int mysqlfs_unlink(const char *path)
 
 out:
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
+    metadata_cache_invalidate_parent(&metadata_cache, path);
     return ret;
 
 err_out:
@@ -280,6 +552,7 @@ static int mysqlfs_chmod(const char* path, mode_t mode)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return ret;
 }
@@ -309,6 +582,7 @@ static int mysqlfs_chown(const char *path, uid_t uid, gid_t gid)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return ret;
 }
@@ -331,6 +605,7 @@ static int mysqlfs_truncate(const char* path, off_t length)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return 0;
 }
@@ -360,6 +635,7 @@ static int mysqlfs_utime(const char *path, struct utimbuf *time)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return 0;
 }
@@ -428,6 +704,10 @@ static int mysqlfs_write(const char *path, const char *buf, size_t size,
     ret = query_write(dbconn, fi->fh, buf, size, offset);
     pool_put(dbconn);
 
+    if (ret >= 0) {
+        metadata_cache_invalidate_path(&metadata_cache, path);
+    }
+
     return ret;
 }
 
@@ -491,6 +771,11 @@ static int mysqlfs_symlink(const char *from, const char *to)
 
     pool_put(dbconn);
 
+    if (ret == 0) {
+        metadata_cache_invalidate_path(&metadata_cache, to);
+        metadata_cache_invalidate_parent(&metadata_cache, to);
+    }
+
     return ret;
 }
 
@@ -535,6 +820,13 @@ static int mysqlfs_rename(const char *from, const char *to)
         log_printf(LOG_ERROR, "Error: query_rename(%s -> %s)\n", from, to);
 
     pool_put(dbconn);
+
+    if (ret == 0) {
+        metadata_cache_invalidate_path(&metadata_cache, from);
+        metadata_cache_invalidate_parent(&metadata_cache, from);
+        metadata_cache_invalidate_path(&metadata_cache, to);
+        metadata_cache_invalidate_parent(&metadata_cache, to);
+    }
 
     return ret;
 }
@@ -840,8 +1132,11 @@ int main(int argc, char *argv[])
         fprintf(stderr, " * Metadata cache disabled\n");
     }
 
+    metadata_cache_init(&metadata_cache, opt.cache_ttl);
+
     if (pool_init(&opt) < 0) {
         log_printf(LOG_ERROR, "Error: pool_init() failed\n");
+        metadata_cache_destroy(&metadata_cache);
         fuse_opt_free_args(&args);
         return EXIT_FAILURE;
     }
@@ -866,6 +1161,7 @@ int main(int argc, char *argv[])
     fuse_opt_free_args(&args);
 
     pool_cleanup();
+    metadata_cache_destroy(&metadata_cache);
 
     return EXIT_SUCCESS;
 }
