@@ -142,6 +142,14 @@ MySQL database name.
 
 Enable `big_writes` (strongly suggested).
 
+`-ocache_ttl=<seconds>`
+
+Enable the in-memory metadata and path cache for the specified number of
+seconds. `0` disables caching entirely.
+
+See [docs/CACHING.md](docs/CACHING.md) for cache behavior, benchmark
+results, and TTL tuning guidance.
+
 `-oallow_other`
 
 Enable filesystem access for users other than the one who mounted it.

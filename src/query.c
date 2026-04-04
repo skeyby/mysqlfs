@@ -710,6 +710,62 @@ int query_readdir(MYSQL *mysql, long inode, void *buf, fuse_fill_dir_t filler)
     return ret;
 }
 
+int query_readdir_children_attrs(MYSQL *mysql, long parent_inode, void *ctx,
+                                 query_readdir_children_attrs_cb callback)
+{
+    int ret;
+    char sql[SQL_MAX];
+    MYSQL_RES *result;
+    MYSQL_ROW row;
+    struct stat stbuf;
+
+    snprintf(sql, sizeof(sql),
+             "SELECT t.name, i.inode, i.mode, i.uid, i.gid, i.atime, i.mtime, i.size, "
+             "COUNT(l.inode) "
+             "FROM %s AS t "
+             "JOIN %s AS i ON i.inode = t.inode "
+             "LEFT JOIN %s AS l ON l.inode = i.inode "
+             "WHERE t.parent = '%ld' "
+             "GROUP BY t.name, i.inode, i.mode, i.uid, i.gid, i.atime, i.mtime, i.size",
+             tables->tree, tables->inodes, tables->tree, parent_inode);
+
+    ret = mysql_query(mysql, sql);
+    if (ret) {
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        return -EIO;
+    }
+
+    result = mysql_store_result(mysql);
+    if (!result) {
+        log_printf(LOG_ERROR, "mysql_error: %s\n", mysql_error(mysql));
+        return -EIO;
+    }
+
+    while ((row = mysql_fetch_row(result)) != NULL) {
+        memset(&stbuf, 0, sizeof(struct stat));
+
+        stbuf.st_ino = atol(row[1]);
+        stbuf.st_mode = atoi(row[2]);
+        stbuf.st_uid = atol(row[3]);
+        stbuf.st_gid = atol(row[4]);
+        stbuf.st_atime = atol(row[5]);
+        stbuf.st_mtime = atol(row[6]);
+        stbuf.st_size = row[7] ? atoll(row[7]) : 0;
+        stbuf.st_nlink = row[8] ? atol(row[8]) : 1;
+        stbuf.st_blksize = DATA_BLOCK_SIZE;
+
+        ret = callback(ctx, row[0], &stbuf);
+        if (ret != 0) {
+            mysql_free_result(result);
+            return ret;
+        }
+    }
+
+    mysql_free_result(result);
+
+    return 0;
+}
+
 /**
  * Change the mode attribute in the inode entry.  Should be the entry-point
  * for the kernel's implementation of a chmod() call in an inode on the FUSE

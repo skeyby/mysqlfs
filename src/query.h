@@ -34,6 +34,8 @@ struct table_names {
 
 extern struct table_names *tables;
 
+typedef int (*query_readdir_children_attrs_cb)(void *ctx, const char *name,
+                                               const struct stat *stbuf);
 
 long query_inode(MYSQL *mysql, const char* path);
 int query_inode_full(MYSQL *mysql, const char* path, char *name, size_t name_len,
@@ -46,6 +48,8 @@ long query_mknod(MYSQL *mysql, const char *path, mode_t mode, dev_t rdev,
 long query_mkdir(MYSQL *mysql, const char* path, mode_t mode, long parent);
 long query_mkdir_root(MYSQL *mysql, mode_t mode, uid_t uid, gid_t gid);
 int query_readdir(MYSQL *mysql, long inode, void *buf, fuse_fill_dir_t filler);
+int query_readdir_children_attrs(MYSQL *mysql, long parent_inode, void *ctx,
+                                 query_readdir_children_attrs_cb callback);
 int query_read(MYSQL *mysql, long inode, const char* buf, size_t size, off_t offset);
 int query_write(MYSQL *mysql, long inode, const char* buf, size_t size, off_t offset);
 int query_truncate(MYSQL *mysql, const char *path, off_t length);

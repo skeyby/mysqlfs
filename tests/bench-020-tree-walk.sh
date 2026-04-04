@@ -5,10 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/test-lib.sh"
 
-FILE_COUNT="${MYSQLFS_BENCH_FILE_COUNT:-15000}"
-BENCH_DIR_NAME="${MYSQLFS_BENCH_DIR_NAME:-benchdir}"
-RESULTS_FILE="${MYSQLFS_BENCH_RESULTS_FILE:-}"
-READ_COMMAND="${MYSQLFS_BENCH_READ_COMMAND:-ls -l >/dev/null}"
+TOP_DIRS="${MYSQLFS_TREE_BENCH_TOP_DIRS:-100}"
+SUBDIRS_PER_TOP="${MYSQLFS_TREE_BENCH_SUBDIRS_PER_TOP:-100}"
+FILES_PER_SUBDIR="${MYSQLFS_TREE_BENCH_FILES_PER_SUBDIR:-1}"
+BENCH_DIR_NAME="${MYSQLFS_TREE_BENCH_DIR_NAME:-treebench}"
+RESULTS_FILE="${MYSQLFS_TREE_BENCH_RESULTS_FILE:-}"
+READ_COMMAND="${MYSQLFS_TREE_BENCH_READ_COMMAND:-find . >/dev/null}"
 BENCH_PHASE="${MYSQLFS_BENCH_PHASE:-full}"
 BENCH_MOUNTPOINT=""
 BENCH_MYSQLFS_PID=""
@@ -27,18 +29,33 @@ run_timed_shell() {
     ' sh -c "$command"
 }
 
-create_benchmark_files() {
+create_tree_benchmark() {
     local target_dir="$1"
-    local file_count="$2"
+    local top_dirs="$2"
+    local subdirs_per_top="$3"
+    local files_per_subdir="$4"
 
     perl -e '
-        my ($dir, $count) = @ARGV;
-        for my $i (1 .. $count) {
-            my $path = sprintf("%s/file_%05d", $dir, $i);
-            open my $fh, ">", $path or die "$path: $!\n";
-            close $fh or die "$path: $!\n";
+        use File::Path qw(make_path);
+
+        my ($root, $top_count, $sub_count, $file_count) = @ARGV;
+
+        for my $top (1 .. $top_count) {
+            my $top_dir = sprintf("%s/dir_%03d", $root, $top);
+            make_path($top_dir) or die "$top_dir: $!\n";
+
+            for my $sub (1 .. $sub_count) {
+                my $sub_dir = sprintf("%s/sub_%03d", $top_dir, $sub);
+                make_path($sub_dir) or die "$sub_dir: $!\n";
+
+                for my $file (1 .. $file_count) {
+                    my $path = sprintf("%s/file_%03d", $sub_dir, $file);
+                    open my $fh, ">", $path or die "$path: $!\n";
+                    close $fh or die "$path: $!\n";
+                }
+            }
         }
-    ' "$target_dir" "$file_count"
+    ' "$target_dir" "$top_dirs" "$subdirs_per_top" "$files_per_subdir"
 }
 
 record_result() {
@@ -48,9 +65,11 @@ record_result() {
     printf "%-16s %s s\n" "$label:" "$seconds"
 
     if [ -n "$RESULTS_FILE" ]; then
-        printf "%s,%s,%s,%s\n" \
+        printf "%s,%s,%s,%s,%s,%s\n" \
             "$(date +%F)" \
-            "$FILE_COUNT" \
+            "$TOP_DIRS" \
+            "$SUBDIRS_PER_TOP" \
+            "$FILES_PER_SUBDIR" \
             "$label" \
             "$seconds" >>"$RESULTS_FILE"
     fi
@@ -68,16 +87,19 @@ restart_mysqlfs() {
 main() {
     local repo_root=""
     local bench_dir=""
-    local setup_log_prefix="mysqlfs-bench-large-directory-setup"
-    local read_log_prefix="mysqlfs-bench-large-directory-read"
+    local setup_log_prefix="mysqlfs-bench-tree-walk-setup"
+    local read_log_prefix="mysqlfs-bench-tree-walk-read"
     local seconds=""
+    local total_dirs=""
+    local total_files=""
+
     repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
     init_mysqlfs_test_env "$repo_root"
     init_mysql_admin_args
     BENCH_SAVED_NOAPPLEDOUBLE="${MYSQLFS_TEST_MACOS_NOAPPLEDOUBLE:-0}"
     MYSQLFS_TEST_MACOS_NOAPPLEDOUBLE=1
-    BENCH_SETUP_LOG="$(mktemp "$(default_mount_root)/mysqlfs-bench-setup.XXXXXX.log")"
-    BENCH_MOUNTPOINT="$(make_mountpoint "mysqlfs-bench-large-directory")"
+    BENCH_SETUP_LOG="$(mktemp "$(default_mount_root)/mysqlfs-bench-tree-setup.XXXXXX.log")"
+    BENCH_MOUNTPOINT="$(make_mountpoint "mysqlfs-bench-tree-walk")"
     trap 'MYSQLFS_TEST_MACOS_NOAPPLEDOUBLE="$BENCH_SAVED_NOAPPLEDOUBLE"; cleanup_mount "$BENCH_MOUNTPOINT" "$BENCH_MYSQLFS_PID"; rm -f "$BENCH_SETUP_LOG"' EXIT
 
     case "$BENCH_PHASE" in
@@ -92,12 +114,14 @@ main() {
 
             bench_dir="$BENCH_MOUNTPOINT/$BENCH_DIR_NAME"
             mkdir "$bench_dir"
-            create_benchmark_files "$bench_dir" "$FILE_COUNT"
+            create_tree_benchmark "$bench_dir" "$TOP_DIRS" "$SUBDIRS_PER_TOP" "$FILES_PER_SUBDIR"
 
             if [ "$BENCH_PHASE" = "setup" ]; then
                 echo "Benchmark setup completed."
-                echo "files:        $FILE_COUNT"
                 echo "path:         $bench_dir"
+                echo "top_dirs:     $TOP_DIRS"
+                echo "subdirs/top:  $SUBDIRS_PER_TOP"
+                echo "files/subdir: $FILES_PER_SUBDIR"
                 return 0
             fi
 
@@ -113,19 +137,25 @@ main() {
     esac
 
     bench_dir="$BENCH_MOUNTPOINT/$BENCH_DIR_NAME"
+    total_dirs=$((1 + TOP_DIRS + (TOP_DIRS * SUBDIRS_PER_TOP)))
+    total_files=$((TOP_DIRS * SUBDIRS_PER_TOP * FILES_PER_SUBDIR))
 
-    echo "Benchmark: large-directory-listing (two-step)"
+    echo "Benchmark: tree-walk (two-step)"
     echo "phase:        $BENCH_PHASE"
-    echo "files:        $FILE_COUNT"
     echo "path:         $bench_dir"
+    echo "top_dirs:     $TOP_DIRS"
+    echo "subdirs/top:  $SUBDIRS_PER_TOP"
+    echo "files/subdir: $FILES_PER_SUBDIR"
+    echo "total_dirs:   $total_dirs"
+    echo "total_files:  $total_files"
     echo "read command: $READ_COMMAND"
     echo
 
     seconds="$(run_timed_shell "cd '$bench_dir'")"
     record_result "cd" "$seconds"
 
-    seconds="$(run_timed_shell "cd '$bench_dir' && ls >/dev/null")"
-    record_result "cd+ls" "$seconds"
+    seconds="$(run_timed_shell "cd '$bench_dir' && find . -type d >/dev/null")"
+    record_result "find dirs" "$seconds"
 
     seconds="$(run_timed_shell "cd '$bench_dir' && $READ_COMMAND")"
     record_result "read #1" "$seconds"

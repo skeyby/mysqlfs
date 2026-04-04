@@ -24,6 +24,7 @@
 
 #include <pthread.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #ifdef DEBUG
 #include <mcheck.h>
@@ -35,29 +36,509 @@
 #include "pool.h"
 #include "log.h"
 
+#define CACHE_BUCKET_COUNT 256
+
+struct metadata_cache_entry {
+    char *path;
+    struct stat stbuf;
+    time_t expires_at;
+    struct metadata_cache_entry *next;
+};
+
+struct metadata_cache {
+    struct metadata_cache_entry *buckets[CACHE_BUCKET_COUNT];
+    pthread_mutex_t mutex;
+    unsigned int ttl;
+    size_t count;
+};
+
+struct inode_cache_entry {
+    char *path;
+    long inode;
+    time_t expires_at;
+    struct inode_cache_entry *next;
+};
+
+struct inode_cache {
+    struct inode_cache_entry *buckets[CACHE_BUCKET_COUNT];
+    pthread_mutex_t mutex;
+    unsigned int ttl;
+    size_t count;
+};
+
+struct readdir_cache_fill_ctx {
+    const char *dir_path;
+    void *buf;
+    fuse_fill_dir_t filler;
+};
+
+static struct metadata_cache metadata_cache;
+static struct inode_cache inode_cache;
+
+static int metadata_cache_enabled(const struct metadata_cache *cache)
+{
+    return cache->ttl > 0;
+}
+
+static unsigned long cache_hash_path(const char *path)
+{
+    unsigned long hash = 5381;
+    unsigned char ch;
+
+    while ((ch = (unsigned char)*path++) != '\0') {
+        hash = ((hash << 5) + hash) + ch;
+    }
+
+    return hash % CACHE_BUCKET_COUNT;
+}
+
+static void metadata_cache_init(struct metadata_cache *cache, unsigned int ttl)
+{
+    memset(cache->buckets, 0, sizeof(cache->buckets));
+    pthread_mutex_init(&cache->mutex, NULL);
+    cache->ttl = ttl;
+    cache->count = 0;
+}
+
+static void inode_cache_init(struct inode_cache *cache, unsigned int ttl)
+{
+    memset(cache->buckets, 0, sizeof(cache->buckets));
+    pthread_mutex_init(&cache->mutex, NULL);
+    cache->ttl = ttl;
+    cache->count = 0;
+}
+
+static void metadata_cache_destroy(struct metadata_cache *cache)
+{
+    struct metadata_cache_entry *entry;
+    struct metadata_cache_entry *next;
+    size_t bucket;
+
+    pthread_mutex_lock(&cache->mutex);
+
+    for (bucket = 0; bucket < CACHE_BUCKET_COUNT; bucket++) {
+        entry = cache->buckets[bucket];
+
+        while (entry != NULL) {
+            next = entry->next;
+            free(entry->path);
+            free(entry);
+            entry = next;
+        }
+
+        cache->buckets[bucket] = NULL;
+    }
+
+    cache->count = 0;
+
+    pthread_mutex_unlock(&cache->mutex);
+    pthread_mutex_destroy(&cache->mutex);
+}
+
+static void inode_cache_destroy(struct inode_cache *cache)
+{
+    struct inode_cache_entry *entry;
+    struct inode_cache_entry *next;
+    size_t bucket;
+
+    pthread_mutex_lock(&cache->mutex);
+
+    for (bucket = 0; bucket < CACHE_BUCKET_COUNT; bucket++) {
+        entry = cache->buckets[bucket];
+
+        while (entry != NULL) {
+            next = entry->next;
+            free(entry->path);
+            free(entry);
+            entry = next;
+        }
+
+        cache->buckets[bucket] = NULL;
+    }
+
+    cache->count = 0;
+
+    pthread_mutex_unlock(&cache->mutex);
+    pthread_mutex_destroy(&cache->mutex);
+}
+
+static int metadata_cache_get(struct metadata_cache *cache, const char *path, struct stat *stbuf)
+{
+    struct metadata_cache_entry *entry;
+    struct metadata_cache_entry *prev;
+    unsigned long bucket;
+    time_t now;
+
+    if (!metadata_cache_enabled(cache)) {
+        return 0;
+    }
+
+    bucket = cache_hash_path(path);
+    now = time(NULL);
+
+    pthread_mutex_lock(&cache->mutex);
+
+    prev = NULL;
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            if (entry->expires_at <= now) {
+                if (prev != NULL) {
+                    prev->next = entry->next;
+                } else {
+                    cache->buckets[bucket] = entry->next;
+                }
+
+                cache->count--;
+                free(entry->path);
+                free(entry);
+                pthread_mutex_unlock(&cache->mutex);
+                return 0;
+            }
+
+            memcpy(stbuf, &entry->stbuf, sizeof(struct stat));
+            pthread_mutex_unlock(&cache->mutex);
+            return 1;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    pthread_mutex_unlock(&cache->mutex);
+    return 0;
+}
+
+static void metadata_cache_set(struct metadata_cache *cache, const char *path, const struct stat *stbuf)
+{
+    struct metadata_cache_entry *entry;
+    unsigned long bucket;
+    time_t expires_at;
+
+    if (!metadata_cache_enabled(cache)) {
+        return;
+    }
+
+    bucket = cache_hash_path(path);
+    expires_at = time(NULL) + cache->ttl;
+
+    pthread_mutex_lock(&cache->mutex);
+
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            memcpy(&entry->stbuf, stbuf, sizeof(struct stat));
+            entry->expires_at = expires_at;
+            pthread_mutex_unlock(&cache->mutex);
+            return;
+        }
+
+        entry = entry->next;
+    }
+
+    entry = calloc(1, sizeof(struct metadata_cache_entry));
+    if (entry == NULL) {
+        pthread_mutex_unlock(&cache->mutex);
+        return;
+    }
+
+    entry->path = strdup(path);
+    if (entry->path == NULL) {
+        free(entry);
+        pthread_mutex_unlock(&cache->mutex);
+        return;
+    }
+
+    memcpy(&entry->stbuf, stbuf, sizeof(struct stat));
+    entry->expires_at = expires_at;
+    entry->next = cache->buckets[bucket];
+    cache->buckets[bucket] = entry;
+    cache->count++;
+
+    pthread_mutex_unlock(&cache->mutex);
+}
+
+static void metadata_cache_invalidate_path(struct metadata_cache *cache, const char *path)
+{
+    struct metadata_cache_entry *entry;
+    struct metadata_cache_entry *prev;
+    unsigned long bucket;
+
+    if (!metadata_cache_enabled(cache)) {
+        return;
+    }
+
+    bucket = cache_hash_path(path);
+
+    pthread_mutex_lock(&cache->mutex);
+
+    prev = NULL;
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            if (prev != NULL) {
+                prev->next = entry->next;
+            } else {
+                cache->buckets[bucket] = entry->next;
+            }
+
+            cache->count--;
+            free(entry->path);
+            free(entry);
+            break;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    pthread_mutex_unlock(&cache->mutex);
+}
+
+static void metadata_cache_invalidate_parent(struct metadata_cache *cache, const char *path)
+{
+    char tmppath[PATH_MAX];
+    char *dir_path;
+
+    if (!metadata_cache_enabled(cache)) {
+        return;
+    }
+
+    if (!(strlen(path) < PATH_MAX)) {
+        return;
+    }
+
+    strcpy(tmppath, path);
+    dir_path = dirname(tmppath);
+    metadata_cache_invalidate_path(cache, dir_path);
+}
+
+static int inode_cache_enabled(const struct inode_cache *cache)
+{
+    return cache->ttl > 0;
+}
+
+static int inode_cache_get(struct inode_cache *cache, const char *path, long *inode)
+{
+    struct inode_cache_entry *entry;
+    struct inode_cache_entry *prev;
+    unsigned long bucket;
+    time_t now;
+
+    if (!inode_cache_enabled(cache)) {
+        return 0;
+    }
+
+    bucket = cache_hash_path(path);
+    now = time(NULL);
+
+    pthread_mutex_lock(&cache->mutex);
+
+    prev = NULL;
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            if (entry->expires_at <= now) {
+                if (prev != NULL) {
+                    prev->next = entry->next;
+                } else {
+                    cache->buckets[bucket] = entry->next;
+                }
+
+                cache->count--;
+                free(entry->path);
+                free(entry);
+                pthread_mutex_unlock(&cache->mutex);
+                return 0;
+            }
+
+            *inode = entry->inode;
+            pthread_mutex_unlock(&cache->mutex);
+            return 1;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    pthread_mutex_unlock(&cache->mutex);
+    return 0;
+}
+
+static void inode_cache_set(struct inode_cache *cache, const char *path, long inode)
+{
+    struct inode_cache_entry *entry;
+    unsigned long bucket;
+    time_t expires_at;
+
+    if (!inode_cache_enabled(cache)) {
+        return;
+    }
+
+    bucket = cache_hash_path(path);
+    expires_at = time(NULL) + cache->ttl;
+
+    pthread_mutex_lock(&cache->mutex);
+
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            entry->inode = inode;
+            entry->expires_at = expires_at;
+            pthread_mutex_unlock(&cache->mutex);
+            return;
+        }
+
+        entry = entry->next;
+    }
+
+    entry = calloc(1, sizeof(struct inode_cache_entry));
+    if (entry == NULL) {
+        pthread_mutex_unlock(&cache->mutex);
+        return;
+    }
+
+    entry->path = strdup(path);
+    if (entry->path == NULL) {
+        free(entry);
+        pthread_mutex_unlock(&cache->mutex);
+        return;
+    }
+
+    entry->inode = inode;
+    entry->expires_at = expires_at;
+    entry->next = cache->buckets[bucket];
+    cache->buckets[bucket] = entry;
+    cache->count++;
+
+    pthread_mutex_unlock(&cache->mutex);
+}
+
+static void inode_cache_invalidate_path(struct inode_cache *cache, const char *path)
+{
+    struct inode_cache_entry *entry;
+    struct inode_cache_entry *prev;
+    unsigned long bucket;
+
+    if (!inode_cache_enabled(cache)) {
+        return;
+    }
+
+    bucket = cache_hash_path(path);
+
+    pthread_mutex_lock(&cache->mutex);
+
+    prev = NULL;
+    entry = cache->buckets[bucket];
+
+    while (entry != NULL) {
+        if (strcmp(entry->path, path) == 0) {
+            if (prev != NULL) {
+                prev->next = entry->next;
+            } else {
+                cache->buckets[bucket] = entry->next;
+            }
+
+            cache->count--;
+            free(entry->path);
+            free(entry);
+            break;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    pthread_mutex_unlock(&cache->mutex);
+}
+
+static void inode_cache_invalidate_parent(struct inode_cache *cache, const char *path)
+{
+    char tmppath[PATH_MAX];
+    char *dir_path;
+
+    if (!inode_cache_enabled(cache)) {
+        return;
+    }
+
+    if (!(strlen(path) < PATH_MAX)) {
+        return;
+    }
+
+    strcpy(tmppath, path);
+    dir_path = dirname(tmppath);
+    inode_cache_invalidate_path(cache, dir_path);
+}
+
+static long cached_query_inode(MYSQL *mysql, const char *path)
+{
+    long inode;
+
+    if (inode_cache_get(&inode_cache, path, &inode)) {
+        return inode;
+    }
+
+    inode = query_inode(mysql, path);
+    if (inode >= 0) {
+        inode_cache_set(&inode_cache, path, inode);
+    }
+
+    return inode;
+}
+
+static int mysqlfs_readdir_cache_fill(void *ctx, const char *name, const struct stat *stbuf)
+{
+    struct readdir_cache_fill_ctx *fill_ctx = ctx;
+    char child_path[PATH_MAX];
+
+    fill_ctx->filler(fill_ctx->buf, name, stbuf, 0);
+
+    if (strcmp(fill_ctx->dir_path, "/") == 0) {
+        snprintf(child_path, sizeof(child_path), "/%s", name);
+    } else {
+        snprintf(child_path, sizeof(child_path), "%s/%s", fill_ctx->dir_path, name);
+    }
+
+    metadata_cache_set(&metadata_cache, child_path, stbuf);
+
+    return 0;
+}
+
 static int mysqlfs_getattr(const char *path, struct stat *stbuf)
 {
     int ret;
     MYSQL *dbconn;
 
-    // This is called far too often
     log_printf(LOG_D_CALL, "mysqlfs_getattr(\"%s\")\n", path);
 
     memset(stbuf, 0, sizeof(struct stat));
 
-    if ((dbconn = pool_get()) == NULL)
+    if (metadata_cache_get(&metadata_cache, path, stbuf)) {
+        stbuf->st_blocks = (blkcnt_t)((stbuf->st_size + 511) / 512);
+        return 0;
+    }
+
+    if ((dbconn = pool_get()) == NULL) {
         return -EMFILE;
+    }
 
     ret = query_getattr(dbconn, path, stbuf);
 
     if (ret) {
-        if (ret != -ENOENT)
+        if (ret != -ENOENT) {
             log_printf(LOG_ERROR, "Error: query_getattr()\n");
+        }
         pool_put(dbconn);
         return ret;
     }
 
     stbuf->st_blocks = (blkcnt_t)((stbuf->st_size + 511) / 512);
+    metadata_cache_set(&metadata_cache, path, stbuf);
 
     pool_put(dbconn);
 
@@ -72,24 +553,33 @@ static int mysqlfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     int ret;
     MYSQL *dbconn;
     long inode;
+    struct readdir_cache_fill_ctx fill_ctx;
 
     log_printf(LOG_D_CALL, "mysqlfs_readdir(\"%s\")\n", path);
 
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    inode = query_inode(dbconn, path);
+    inode = cached_query_inode(dbconn, path);
     if(inode < 0){
         log_printf(LOG_ERROR, "Error: query_inode()\n");
         pool_put(dbconn);
         return inode;
     }
 
-    
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
-    ret = query_readdir(dbconn, inode, buf, filler);
+    if (metadata_cache_enabled(&metadata_cache)) {
+        fill_ctx.dir_path = path;
+        fill_ctx.buf = buf;
+        fill_ctx.filler = filler;
+        ret = query_readdir_children_attrs(dbconn, inode, &fill_ctx,
+                                           mysqlfs_readdir_cache_fill);
+    } else {
+        ret = query_readdir(dbconn, inode, buf, filler);
+    }
+
     pool_put(dbconn);
 
     if (ret < 0)
@@ -125,7 +615,7 @@ static int mysqlfs_mknod(const char *path, mode_t mode, dev_t rdev)
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    parent_inode = query_inode(dbconn, dir_path);
+    parent_inode = cached_query_inode(dbconn, dir_path);
     if(parent_inode < 0){
         log_printf(LOG_ERROR, "Error getting parent inode dirpath %s\n", dir_path);
         pool_put(dbconn);
@@ -140,6 +630,10 @@ static int mysqlfs_mknod(const char *path, mode_t mode, dev_t rdev)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
+    metadata_cache_invalidate_parent(&metadata_cache, path);
+    inode_cache_invalidate_path(&inode_cache, path);
+    inode_cache_invalidate_parent(&inode_cache, path);
     return 0;
 }
 
@@ -164,7 +658,7 @@ static int mysqlfs_mkdir(const char *path, mode_t mode){
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    inode = query_inode(dbconn, dir_path);
+    inode = cached_query_inode(dbconn, dir_path);
     if(inode < 0){
         pool_put(dbconn);
         return -ENOENT;
@@ -178,6 +672,10 @@ static int mysqlfs_mkdir(const char *path, mode_t mode){
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
+    metadata_cache_invalidate_parent(&metadata_cache, path);
+    inode_cache_invalidate_path(&inode_cache, path);
+    inode_cache_invalidate_parent(&inode_cache, path);
     return 0;
 }
 
@@ -220,6 +718,10 @@ static int mysqlfs_unlink(const char *path)
 
 out:
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
+    metadata_cache_invalidate_parent(&metadata_cache, path);
+    inode_cache_invalidate_path(&inode_cache, path);
+    inode_cache_invalidate_parent(&inode_cache, path);
     return ret;
 
 err_out:
@@ -238,7 +740,7 @@ static int mysqlfs_chmod(const char* path, mode_t mode)
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    inode = query_inode(dbconn, path);
+    inode = cached_query_inode(dbconn, path);
     if (inode < 0) {
         pool_put(dbconn);
         return inode;
@@ -252,6 +754,7 @@ static int mysqlfs_chmod(const char* path, mode_t mode)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return ret;
 }
@@ -267,7 +770,7 @@ static int mysqlfs_chown(const char *path, uid_t uid, gid_t gid)
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    inode = query_inode(dbconn, path);
+    inode = cached_query_inode(dbconn, path);
     if (inode < 0) {
         pool_put(dbconn);
         return inode;
@@ -281,6 +784,7 @@ static int mysqlfs_chown(const char *path, uid_t uid, gid_t gid)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return ret;
 }
@@ -303,6 +807,7 @@ static int mysqlfs_truncate(const char* path, off_t length)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return 0;
 }
@@ -318,7 +823,7 @@ static int mysqlfs_utime(const char *path, struct utimbuf *time)
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    inode = query_inode(dbconn, path);
+    inode = cached_query_inode(dbconn, path);
     if (inode < 0) {
         pool_put(dbconn);
         return inode;
@@ -332,6 +837,7 @@ static int mysqlfs_utime(const char *path, struct utimbuf *time)
     }
 
     pool_put(dbconn);
+    metadata_cache_invalidate_path(&metadata_cache, path);
 
     return 0;
 }
@@ -400,6 +906,10 @@ static int mysqlfs_write(const char *path, const char *buf, size_t size,
     ret = query_write(dbconn, fi->fh, buf, size, offset);
     pool_put(dbconn);
 
+    if (ret >= 0) {
+        metadata_cache_invalidate_path(&metadata_cache, path);
+    }
+
     return ret;
 }
 
@@ -446,7 +956,7 @@ static int mysqlfs_symlink(const char *from, const char *to)
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    inode = query_inode(dbconn, to);
+    inode = cached_query_inode(dbconn, to);
     if(inode < 0){
         pool_put(dbconn);
         return -ENOENT;
@@ -456,6 +966,13 @@ static int mysqlfs_symlink(const char *from, const char *to)
     if (ret > 0) ret = 0;
 
     pool_put(dbconn);
+
+    if (ret == 0) {
+        metadata_cache_invalidate_path(&metadata_cache, to);
+        metadata_cache_invalidate_parent(&metadata_cache, to);
+        inode_cache_invalidate_path(&inode_cache, to);
+        inode_cache_invalidate_parent(&inode_cache, to);
+    }
 
     return ret;
 }
@@ -471,7 +988,7 @@ static int mysqlfs_readlink(const char *path, char *buf, size_t size)
     if ((dbconn = pool_get()) == NULL)
       return -EMFILE;
 
-    inode = query_inode(dbconn, path);
+    inode = cached_query_inode(dbconn, path);
     if(inode < 0){
         pool_put(dbconn);
         return -ENOENT;
@@ -501,6 +1018,17 @@ static int mysqlfs_rename(const char *from, const char *to)
         log_printf(LOG_ERROR, "Error: query_rename(%s -> %s)\n", from, to);
 
     pool_put(dbconn);
+
+    if (ret == 0) {
+        metadata_cache_invalidate_path(&metadata_cache, from);
+        metadata_cache_invalidate_parent(&metadata_cache, from);
+        metadata_cache_invalidate_path(&metadata_cache, to);
+        metadata_cache_invalidate_parent(&metadata_cache, to);
+        inode_cache_invalidate_path(&inode_cache, from);
+        inode_cache_invalidate_parent(&inode_cache, from);
+        inode_cache_invalidate_path(&inode_cache, to);
+        inode_cache_invalidate_parent(&inode_cache, to);
+    }
 
     return ret;
 }
@@ -621,19 +1149,19 @@ void usage(){
     fprintf(stderr,
             "usage: mysqlfs [opts] <mountpoint>\n\n");
     fprintf(stderr,
-            "       mysqlfs [-osocket=/tmp/mysql.sock] [-obig_writes] [-oallow_other] [-odefault_permissions] [-oport=####] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
+            "       mysqlfs [-osocket=/tmp/mysql.sock] [-obig_writes] [-oallow_other] [-odefault_permissions] [-ocache_ttl=seconds] [-oport=####] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
             "-odatabase=database ./mountpoint\n");
     fprintf(stderr,
-            "       mysqlfs [-d] [-ologfile=filename] [-obig_writes] [-oallow_other] [-odefault_permissions] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
+            "       mysqlfs [-d] [-ologfile=filename] [-obig_writes] [-oallow_other] [-odefault_permissions] [-ocache_ttl=seconds] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
             "-odatabase=database ./mountpoint\n");
     fprintf(stderr,
-            "       mysqlfs [-mycnf_group=group_name] [-obig_writes] [-oallow_other] [-odefault_permissions] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
+            "       mysqlfs [-mycnf_group=group_name] [-obig_writes] [-oallow_other] [-odefault_permissions] [-ocache_ttl=seconds] [-otable_prefix=prefix] -ohost=host -ouser=user -opassword=password "
             "-odatabase=database ./mountpoint\n");
     fprintf(stderr, "\n(mimick mysql options)\n");
     fprintf(stderr,
-            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [--table_prefix=prefix] --host=host --user=user --password=password --database=database ./mountpoint\n");
+            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [--cache_ttl=seconds] [--table_prefix=prefix] --host=host --user=user --password=password --database=database ./mountpoint\n");
     fprintf(stderr,
-            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [-tp=prefix] -h host -u user --password=password -D database ./mountpoint\n");
+            "       mysqlfs [-obig_writes] [-oallow_other] [-odefault_permissions] [--cache_ttl=seconds] [-tp=prefix] -h host -u user --password=password -D database ./mountpoint\n");
 }
 
 /** macro to set a call value with a default -- defined yet? */
@@ -647,6 +1175,7 @@ enum
     KEY_HELP,
     KEY_VERSION,
     KEY_BIGWRITES,
+    KEY_NOAPPLEDOUBLE,
     KEY_NOPRIVATE,
     KEY_NOPERMISSIONS,
   };
@@ -665,6 +1194,8 @@ static struct fuse_opt mysqlfs_opts[] =
     MYSQLFS_OPT_KEY(  "host=%s",	host,	0),
     MYSQLFS_OPT_KEY("--host=%s",	host,	0),
     MYSQLFS_OPT_KEY( "-h %s",		host,	0),
+    MYSQLFS_OPT_KEY(  "cache_ttl=%u",	cache_ttl,	0),
+    MYSQLFS_OPT_KEY("--cache_ttl=%u",	cache_ttl,	0),
     MYSQLFS_OPT_KEY(  "logfile=%s",	logfile,	0),
     MYSQLFS_OPT_KEY("--logfile=%s",	logfile,	0),
     MYSQLFS_OPT_KEY(  "mycnf_group=%s",	mycnf_group,	0), /* Read defaults from specified group in my.cnf  -- Command line options still have precedence.  */
@@ -688,6 +1219,7 @@ static struct fuse_opt mysqlfs_opts[] =
     FUSE_OPT_KEY("allow_other",         KEY_NOPRIVATE),
     FUSE_OPT_KEY("default_permissions", KEY_NOPERMISSIONS),
     FUSE_OPT_KEY("big_writes",          KEY_BIGWRITES),
+    FUSE_OPT_KEY("noappledouble",       KEY_NOAPPLEDOUBLE),
     FUSE_OPT_KEY("-v",		        KEY_VERSION),
     FUSE_OPT_KEY("--version",	        KEY_VERSION),
     FUSE_OPT_KEY("--help",	        KEY_HELP),
@@ -721,6 +1253,7 @@ static int mysqlfs_opt_proc(void *data, const char *arg, int key, struct fuse_ar
             fprintf(stderr, "pool: %d initial connections\n", opt->init_conns);
             fprintf(stderr, "pool: %d idling connections\n", opt->max_idling_conns);
             fprintf(stderr, "logfile: file://%s\n", opt->logfile);
+            fprintf(stderr, "cache ttl: %u seconds\n", opt->cache_ttl);
             fprintf(stderr, "bg? %s (debug)\n", (opt->bg ? "yes" : "no"));
             fprintf(stderr, "table prefix: %s\n\n", opt->tableprefix);
 
@@ -753,6 +1286,11 @@ static int mysqlfs_opt_proc(void *data, const char *arg, int key, struct fuse_ar
         case KEY_BIGWRITES:
             fprintf(stderr, " * Enabling big writes...\n");
             fuse_opt_add_arg(outargs, "-obig_writes");
+            break;
+
+        case KEY_NOAPPLEDOUBLE:
+            fprintf(stderr, " * Enabling noappledouble\n");
+            fuse_opt_add_arg(outargs, "-onoappledouble");
             break;
 
         default: /* key != FUSE_OPT_KEY_OPT */
@@ -797,8 +1335,19 @@ int main(int argc, char *argv[])
         fprintf(stderr, "WARNING: STRONGLY RECOMMENDED: enable -odefault_permissions when using -oallow_other.\n");
     }
 
+    if (opt.cache_ttl > 0) {
+        fprintf(stderr, " * Metadata cache TTL: %u seconds\n", opt.cache_ttl);
+    } else {
+        fprintf(stderr, " * Metadata cache disabled\n");
+    }
+
+    metadata_cache_init(&metadata_cache, opt.cache_ttl);
+    inode_cache_init(&inode_cache, opt.cache_ttl);
+
     if (pool_init(&opt) < 0) {
         log_printf(LOG_ERROR, "Error: pool_init() failed\n");
+        metadata_cache_destroy(&metadata_cache);
+        inode_cache_destroy(&inode_cache);
         fuse_opt_free_args(&args);
         return EXIT_FAILURE;
     }
@@ -823,6 +1372,8 @@ int main(int argc, char *argv[])
     fuse_opt_free_args(&args);
 
     pool_cleanup();
+    metadata_cache_destroy(&metadata_cache);
+    inode_cache_destroy(&inode_cache);
 
     return EXIT_SUCCESS;
 }
