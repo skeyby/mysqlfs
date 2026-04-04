@@ -1175,6 +1175,7 @@ enum
     KEY_HELP,
     KEY_VERSION,
     KEY_BIGWRITES,
+    KEY_NOAPPLEDOUBLE,
     KEY_NOPRIVATE,
     KEY_NOPERMISSIONS,
   };
@@ -1218,6 +1219,7 @@ static struct fuse_opt mysqlfs_opts[] =
     FUSE_OPT_KEY("allow_other",         KEY_NOPRIVATE),
     FUSE_OPT_KEY("default_permissions", KEY_NOPERMISSIONS),
     FUSE_OPT_KEY("big_writes",          KEY_BIGWRITES),
+    FUSE_OPT_KEY("noappledouble",       KEY_NOAPPLEDOUBLE),
     FUSE_OPT_KEY("-v",		        KEY_VERSION),
     FUSE_OPT_KEY("--version",	        KEY_VERSION),
     FUSE_OPT_KEY("--help",	        KEY_HELP),
@@ -1284,6 +1286,11 @@ static int mysqlfs_opt_proc(void *data, const char *arg, int key, struct fuse_ar
         case KEY_BIGWRITES:
             fprintf(stderr, " * Enabling big writes...\n");
             fuse_opt_add_arg(outargs, "-obig_writes");
+            break;
+
+        case KEY_NOAPPLEDOUBLE:
+            fprintf(stderr, " * Enabling noappledouble\n");
+            fuse_opt_add_arg(outargs, "-onoappledouble");
             break;
 
         default: /* key != FUSE_OPT_KEY_OPT */
