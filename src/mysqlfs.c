@@ -765,7 +765,11 @@ static int mysqlfs_opt_proc(void *data, const char *arg, int key, struct fuse_ar
             exit(0);
 
         case KEY_VERSION: /* show version and quit */
-            fprintf(stderr, "MySQLfs %d.%d fuse-%d\n\n", MySQLfs_VERSION_MAJOR, MySQLfs_VERSION_MINOR, FUSE_VERSION);
+            fprintf(stderr, "MySQLfs %d.%d.%d fuse-%d\n\n",
+                    MySQLfs_VERSION_MAJOR,
+                    MySQLfs_VERSION_MINOR,
+                    MySQLfs_VERSION_PATCH,
+                    FUSE_VERSION);
             exit(0);
 
         case KEY_NOPRIVATE:
@@ -808,7 +812,11 @@ int main(int argc, char *argv[])
 
     log_file = stderr;
 
-    fprintf(stderr, "\nMySQLfs version %d.%d startup. Using fuse-%d\n\n", MySQLfs_VERSION_MAJOR, MySQLfs_VERSION_MINOR, FUSE_VERSION);
+    fprintf(stderr, "\nMySQLfs version %d.%d.%d startup. Using fuse-%d\n\n",
+            MySQLfs_VERSION_MAJOR,
+            MySQLfs_VERSION_MINOR,
+            MySQLfs_VERSION_PATCH,
+            FUSE_VERSION);
 
     fuse_opt_parse(&args, &opt, mysqlfs_opts, mysqlfs_opt_proc);
 

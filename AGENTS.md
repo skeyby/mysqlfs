@@ -13,6 +13,15 @@ This file collects repository-specific guidance for coding agents working on `my
 - Before creating a release tag or other stable milestone tag, update the
   project changelog first so the tagged state always contains the
   corresponding release notes.
+- Before creating a release tag or other stable milestone tag, also make
+  sure the release version is aligned in every packaging and runtime
+  surface that exposes it:
+  - update the Debian package version metadata under `debian/`
+  - update the FreeBSD package version metadata or fallback version under
+    `pkg/freebsd/`
+  - update the internal mysqlfs version used by the binary and setup
+    helper so `--version`, startup banners, and setup messages report the
+    tagged release number
 
 Example:
 

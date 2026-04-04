@@ -40,7 +40,7 @@ detect_version() {
         fi
     fi
 
-    printf '%s\n' "1.0.2"
+    printf '%s\n' "1.0.3"
 }
 
 pkg_dep_version() {

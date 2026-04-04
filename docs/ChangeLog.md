@@ -6,6 +6,25 @@ between `ChangeLog` and `NEWS`, and extends them with the work done after
 the 0.4.3 release notes up to the current 1.0.0 line.
 
 
+Version 1.0.3 (2026-04-04)
+--------------------------
+
+* Added first local packaging support for current Linux and FreeBSD
+  systems:
+  - introduced an initial Debian packaging layout under `debian/`
+  - added a minimal Debian post-install message pointing users at the
+    installed documentation
+  - introduced a local FreeBSD package builder under `pkg/freebsd/`
+  - verified local `.deb` and `.pkg` creation and installation flows on
+    Debian 13 and FreeBSD 15
+
+* Refreshed release metadata across the project:
+  - aligned the runtime mysqlfs version banner and `--version` output
+    with the 1.0.3 release
+  - updated `mysqlfs_setup` to report the current release number
+  - documented the release tagging checklist in `AGENTS.md`
+
+
 Version 1.0.2 (2026-04-04)
 --------------------------
 

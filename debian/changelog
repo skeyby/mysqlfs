@@ -1,5 +1,5 @@
-mysqlfs (1.0.2) unstable; urgency=medium
+mysqlfs (1.0.3) unstable; urgency=medium
 
-  * Initial Debian packaging.
+  * Refresh release metadata for version 1.0.3.
 
  -- Andrea Brancatelli <andrea@brancatelli.it>  Sat, 04 Apr 2026 19:30:00 +0300
