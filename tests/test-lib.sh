@@ -35,17 +35,27 @@ make_mountpoint() {
 start_mysqlfs_test() {
     local mountpoint="$1"
     local log_prefix="$2"
+    local mysqlfs_args=()
+
+    if [ -n "${MYSQLFS_TEST_SOCKET:-}" ]; then
+        mysqlfs_args+=("-osocket=$MYSQLFS_TEST_SOCKET")
+    else
+        mysqlfs_args+=("-ohost=${MYSQLFS_TEST_DB_HOST:-localhost}")
+    fi
+
+    mysqlfs_args+=(
+        -f
+        -s
+        -obig_writes
+        -odefault_permissions
+        "-odatabase=$MYSQLFS_TEST_DB_NAME"
+        "-ouser=$MYSQLFS_TEST_DB_USER"
+        "-opassword=$MYSQLFS_TEST_DB_PASS"
+        "$mountpoint"
+    )
 
     "$MYSQLFS_TEST_BIN" \
-        -f \
-        -s \
-        -obig_writes \
-        -odefault_permissions \
-        -osocket="$MYSQLFS_TEST_SOCKET" \
-        -odatabase="$MYSQLFS_TEST_DB_NAME" \
-        -ouser="$MYSQLFS_TEST_DB_USER" \
-        -opassword="$MYSQLFS_TEST_DB_PASS" \
-        "$mountpoint" \
+        "${mysqlfs_args[@]}" \
         >"/tmp/${log_prefix}.stdout.log" \
         2>"/tmp/${log_prefix}.stderr.log" &
 
@@ -84,21 +94,6 @@ assert_eq() {
     if [ "$expected" != "$actual" ]; then
         fail "$message (expected '$expected', got '$actual')"
     fi
-}
-
-wait_for_mount() {
-    local mountpoint="$1"
-    local attempt=0
-
-    while [ "$attempt" -lt 50 ]; do
-        if mount | grep "on $mountpoint " >/dev/null 2>&1; then
-            return 0
-        fi
-        attempt=$((attempt + 1))
-        sleep 0.1
-    done
-
-    return 1
 }
 
 stat_mode() {
