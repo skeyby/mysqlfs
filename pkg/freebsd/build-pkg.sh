@@ -27,8 +27,20 @@ require_command() {
 }
 
 detect_version() {
+    local major
+    local minor
+    local patch
+
     if [ -n "$PKG_VERSION" ]; then
         printf '%s\n' "$PKG_VERSION"
+        return 0
+    fi
+
+    major=$(sed -n 's/^set (MySQLfs_VERSION_MAJOR \(.*\))$/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -n 1)
+    minor=$(sed -n 's/^set (MySQLfs_VERSION_MINOR \(.*\))$/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -n 1)
+    patch=$(sed -n 's/^set (MySQLfs_VERSION_PATCH \(.*\))$/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -n 1)
+    if [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ]; then
+        printf '%s\n' "${major}.${minor}.${patch}"
         return 0
     fi
 
