@@ -6,6 +6,29 @@ between `ChangeLog` and `NEWS`, and extends them with the work done after
 the 0.4.3 release notes up to the current 1.0.0 line.
 
 
+Version 1.0.1 (2026-04-04)
+--------------------------
+
+* Validated the current 1.0 line on FreeBSD 15:
+  - fixed a duplicate global definition of the shared table-name pointer
+    that newer linkers reject
+  - confirmed build and test execution on FreeBSD with FUSE user mounts
+    enabled
+  - verified manual mount, remount, and persistence behavior on FreeBSD
+
+* Corrected logical file size handling for sparse writes:
+  - `query_write()` now preserves the logical EOF instead of recomputing
+    inode size from the sum of allocated block lengths
+  - sparse-file regression coverage now matches the intended filesystem
+    semantics across platforms
+
+* Improved test and setup portability:
+  - `run-tests.sh` now finds the expected build output on non-macOS
+    systems more reliably
+  - documented the extra privilege requirement for trigger creation when
+    `mysqlfs_setup` runs against a server with binary logging enabled
+
+
 Version 1.0.0 (2026-04-04)
 --------------------------
 

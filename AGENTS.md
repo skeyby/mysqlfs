@@ -10,6 +10,9 @@ This file collects repository-specific guidance for coding agents working on `my
 - Leave one blank line after the bullet list.
 - Sign the commit message with:
   `Coauthored by AI - Codex GPT 5.4`
+- Before creating a release tag or other stable milestone tag, update the
+  project changelog first so the tagged state always contains the
+  corresponding release notes.
 
 Example:
 
