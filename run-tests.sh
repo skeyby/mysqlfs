@@ -9,9 +9,9 @@ MYSQLFS_TEST_DB_HOST="${MYSQLFS_TEST_DB_HOST:-localhost}"
 MYSQLFS_TEST_DB_NAME="${MYSQLFS_TEST_DB_NAME:-mysqlfs_test}"
 MYSQLFS_TEST_DB_USER="${MYSQLFS_TEST_DB_USER:-mysqlfs_test}"
 MYSQLFS_TEST_DB_PASS="${MYSQLFS_TEST_DB_PASS:-mysqlfs_test}"
-MYSQLFS_TEST_ROOT_USER="${MYSQLFS_TEST_ROOT_USER:-root}"
-MYSQLFS_TEST_ROOT_PASS="${MYSQLFS_TEST_ROOT_PASS:-}"
 MYSQLFS_TEST_SOCKET="${MYSQLFS_TEST_SOCKET:-}"
+MYSQLFS_TEST_ADMIN_USER="${MYSQLFS_TEST_ADMIN_USER:-$MYSQLFS_TEST_DB_USER}"
+MYSQLFS_TEST_ADMIN_PASS="${MYSQLFS_TEST_ADMIN_PASS:-$MYSQLFS_TEST_DB_PASS}"
 
 default_build_dir() {
     case "$(uname -s)" in
@@ -72,24 +72,26 @@ find_mysql_socket() {
     return 1
 }
 
-mysql_root_args=(
-    -u "$MYSQLFS_TEST_ROOT_USER"
-)
+init_mysql_admin_args() {
+    mysql_admin_args=(
+        -u "$MYSQLFS_TEST_ADMIN_USER"
+    )
 
-if [ -n "$MYSQLFS_TEST_ROOT_PASS" ]; then
-    mysql_root_args+=("--password=$MYSQLFS_TEST_ROOT_PASS")
-fi
+    if [ -n "$MYSQLFS_TEST_ADMIN_PASS" ]; then
+        mysql_admin_args+=("--password=$MYSQLFS_TEST_ADMIN_PASS")
+    fi
 
-if MYSQLFS_TEST_SOCKET="$(find_mysql_socket)"; then
-    mysql_root_args+=("--socket=$MYSQLFS_TEST_SOCKET")
-else
-    mysql_root_args+=("-h" "$MYSQLFS_TEST_DB_HOST")
-fi
+    if MYSQLFS_TEST_SOCKET="$(find_mysql_socket)"; then
+        mysql_admin_args+=("--socket=$MYSQLFS_TEST_SOCKET")
+    else
+        mysql_admin_args+=("-h" "$MYSQLFS_TEST_DB_HOST")
+    fi
+}
 
 bootstrap_database() {
     echo "Resetting test database $MYSQLFS_TEST_DB_NAME"
 
-    mysql "${mysql_root_args[@]}" <<SQL
+    mysql "${mysql_admin_args[@]}" <<SQL
 DROP DATABASE IF EXISTS \`$MYSQLFS_TEST_DB_NAME\`;
 CREATE DATABASE \`$MYSQLFS_TEST_DB_NAME\`;
 SQL
@@ -135,6 +137,7 @@ main() {
         exit 1
     fi
 
+    init_mysql_admin_args
     bootstrap_database
 
     for test_script in "$TESTS_DIR"/[0-9][0-9][0-9]-*.sh; do

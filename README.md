@@ -103,6 +103,11 @@ GRANT SUPER ON *.* TO 'mysqlfs_test'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
+`run-tests.sh` uses the mysqlfs test account itself for database reset by
+default. If you prefer to keep those privileges on a separate MySQL
+account, you can override the bootstrap credentials with
+`MYSQLFS_TEST_ADMIN_USER` and `MYSQLFS_TEST_ADMIN_PASS`.
+
 2. Execute `mysqlfs_setup` and answer the questions about your database.
    On servers with binary logging enabled, the setup or upgrade process
    may also require elevated privileges to create the triggers used by
